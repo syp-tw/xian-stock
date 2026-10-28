@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f5f7f6" />
+    <meta name="description" content="簡單記錄台股、美股、加拿大股持倉與投資績效的存股管理工具。" />
+    <title>鮮存股｜個人投資紀錄</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#" aria-label="鮮存股首頁">
+          <span class="brand-mark" aria-hidden="true">鮮</span>
+          <span class="brand-copy"><strong>鮮存股</strong><small data-no-translate>STOCK PORTFOLIO TRACKER</small></span>
+        </a>
+        <div class="sidebar-label">工作空間</div>
+        <nav class="side-nav" aria-label="主要導覽">
+          <a class="nav-item active" href="#overview"><span class="nav-icon">▦</span>投資總覽</a>
+          <a class="nav-item" href="#holdings" data-scroll-target="holdings"><span class="nav-icon">▤</span>我的庫存</a>
+          <button class="nav-item" id="open-settings"><span class="nav-icon">⚙</span>偏好設定</button>
+        </nav>
+        <div class="sidebar-note">
+          <span class="note-icon">✳</span>
+          <strong>穩穩累積，慢慢變富</strong>
+          <p>每一次投入，都是為未來多留一點選擇。</p>
+        </div>
+        <div class="sidebar-footer"><span class="status-dot"></span><span id="storage-location-label">資料僅儲存於此裝置</span></div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div class="breadcrumb">我的投資 <span>/</span> 投資總覽</div>
+          <div class="topbar-actions">
+            <span class="market-status"><span class="status-dot"></span>市場報價可查詢</span>
+            <button class="icon-button settings-shortcut" id="open-settings-top" aria-label="偏好設定">⚙</button>
+            <div class="avatar" aria-label="個人帳戶">H</div>
+          </div>
+        </header>
+
+        <div class="page-content">
+          <section class="page-heading" id="overview">
+            <div>
+              <p class="eyebrow">MY PORTFOLIO</p>
+              <h1>投資總覽<span class="heading-sparkle">✳</span></h1>
+              <p class="page-subtitle">好好記錄每一步，讓時間成為你的隊友。</p>
+            </div>
+            <button class="button button-primary" id="add-holding"><span class="button-plus">＋</span>新增持倉</button>
+          </section>
+
+          <section class="summary-card" aria-label="資產總覽">
+            <div class="summary-top">
+              <div>
+                <div class="summary-label-row">
+                  <span class="summary-label">目前投資總市值</span>
+                  <div class="currency-switch" role="group" aria-label="主要顯示幣別">
+                    <button type="button" class="currency-switch-option" data-overview-currency="TWD" aria-pressed="true">TWD</button>
+                    <button type="button" class="currency-switch-option" data-overview-currency="USD" aria-pressed="false">USD</button>
+                  </div>
+                </div>
+                <div class="total-value" id="total-value">NT$ 0</div>
+                <div class="total-value-secondary"><span id="total-value-alternate-label">美元等值</span><strong id="total-value-alternate">US$ 0.00</strong></div>
+                <div class="summary-footnote"><span class="live-pulse"></span><span id="summary-currency-note">依庫存現價估算・新台幣</span></div>
+              </div>
+              <div class="summary-decoration" aria-hidden="true"><span>✳</span><i></i><b></b></div>
+            </div>
+            <div class="summary-divider"></div>
+            <div class="summary-metrics">
+              <div class="metric">
+                <span class="metric-label">總投資本金</span>
+                <strong id="total-cost">NT$ 0</strong>
+                <span class="metric-hint">目前持倉成本</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">帳面總損益</span>
+                <strong id="total-profit" class="profit-value">NT$ 0</strong>
+                <span class="metric-hint" id="profit-hint">含未實現損益</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">日損益</span>
+                <strong id="daily-profit" class="profit-value">—</strong>
+                <span class="metric-hint">相對前一交易日收盤</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">平均報酬率</span>
+                <strong id="average-return" class="profit-value">0.00%</strong>
+                <span class="metric-hint">依投入本金加權計算</span>
+              </div>
+              <div class="metric metric-holdings">
+                <span class="metric-label">持有標的</span>
+                <strong id="holding-count">0 <small>檔</small></strong>
+                <span class="metric-hint">台股、美股與加拿大股</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="holdings-section" id="holdings" tabindex="-1">
+            <div class="section-heading">
+              <div>
+                <div class="section-title-line"><h2>我的庫存</h2><span class="count-pill" id="table-count">0 檔</span></div>
+                <p class="section-subtitle">相同股號自動合併；點選持倉列可檢視交易明細。</p>
+              </div>
+              <div class="section-actions">
+                <button class="button button-outline" id="add-custom-field"><span>＋</span>新增自訂欄位</button>
+                <button class="button button-primary button-small" id="add-holding-table"><span class="button-plus">＋</span>新增持倉</button>
+              </div>
+            </div>
+
+            <div class="table-card">
+              <div class="table-toolbar">
+                <div class="table-tabs"><button class="table-tab active" data-filter="all">全部持倉</button><button class="table-tab" data-filter="TW">台股</button><button class="table-tab" data-filter="US">美股</button><button class="table-tab" data-filter="CA">加拿大股</button></div>
+                <div class="table-toolbar-right"><span class="updated-label" id="updated-label">報價依上次更新時間</span><button class="refresh-button" id="refresh-quotes" title="更新所有報價" aria-label="更新所有報價">↻</button></div>
+              </div>
+              <div class="table-scroll">
+                <table>
+                  <thead><tr>
+                    <th>股票代號 / 名稱</th><th>買入日期</th><th>平均買入價</th><th>持有股數</th><th>目前現價</th><th>手續費</th><th>投資本金</th><th>目前市值</th><th>帳面損益</th><th>報酬率</th>
+                    <th class="custom-header-cell" id="custom-header-anchor" hidden></th><th class="actions-heading">操作</th>
+                  </tr></thead>
+                  <tbody id="holdings-body"></tbody>
+                </table>
+                <div class="empty-state" id="empty-state">
+                  <div class="empty-illustration" aria-hidden="true">✳</div>
+                  <strong>你的投資故事，從第一筆開始</strong>
+                  <p>新增一筆持倉，開始整理自己的投資旅程。</p>
+                  <button class="button button-primary" id="empty-add-holding">＋ 新增第一筆持倉</button>
+                </div>
+              </div>
+              <div class="table-footer"><span id="table-footer-count">顯示 0 筆持倉</span><span>報價可能延遲，實際成交價格請以券商為準。</span></div>
+            </div>
+          </section>
+
+          <footer class="page-footer"><span>以耐心，累積每一份成長。</span><span>報價來源：Yahoo Finance ・ <span id="footer-year"></span></span></footer>
+        </div>
+      </main>
+    </div>
+
+    <dialog class="app-dialog" id="transaction-dialog">
+      <form id="transaction-form">
+        <input type="hidden" name="transactionId" />
+        <div class="dialog-heading"><div><p class="eyebrow">PORTFOLIO ACTIVITY</p><h2 id="transaction-title">新增交易</h2></div><button type="button" class="dialog-close" data-close="transaction-dialog" aria-label="關閉">×</button></div>
+        <p class="field-help" id="transaction-legacy-notice" hidden></p>
+        <div class="form-field"><label for="transaction-type">交易類型</label><select id="transaction-type" name="type">
+          <option value="buy">買入</option><option value="sell">賣出</option><option value="dividend">現金配息</option><option value="stockDividend">股票配股</option><option value="split">股票分割</option><option value="capitalReduction">減資</option>
+        </select></div>
+        <div class="form-field"><label for="transaction-symbol">股票代號或名稱</label><div class="quote-input-wrap"><input id="transaction-symbol" name="symbol" autocomplete="off" placeholder="例如：2330、台積電、AAPL" required /><button class="quote-search-button" type="button" id="search-quote" title="搜尋即時報價">↗</button><div class="suggestions" id="quote-suggestions" role="listbox"></div></div><small class="field-help">輸入完整代號或台股中文名稱會自動帶入即時股價；其他名稱請選擇搜尋結果。</small></div>
+        <div class="form-grid">
+          <div class="form-field"><label for="transaction-date">交易日期</label><input id="transaction-date" name="date" type="date" required /></div>
+          <div class="form-field" id="quantity-field"><label for="transaction-quantity" id="quantity-label">買入股數</label><input id="transaction-quantity" name="quantity" type="number" min="0.000001" step="any" placeholder="0" /></div>
+          <div class="form-field" id="price-field"><label for="transaction-price" id="price-label">買入價格</label><input id="transaction-price" name="price" type="number" min="0" step="any" placeholder="0.00" /></div>
+          <div class="form-field" id="fee-field"><label for="transaction-fee">手續費</label><input id="transaction-fee" name="fee" type="number" min="0" step="any" placeholder="自動計算" /><small class="field-help" id="fee-help">依偏好設定預估，可自行調整。</small></div>
+          <div class="form-field" id="split-field" hidden><label for="split-ratio">分割比例（新股數 / 舊股數）</label><input id="split-ratio" name="ratio" type="number" min="0.000001" step="any" placeholder="例如：2" /></div>
+        </div>
+        <div class="form-field" id="quote-price-field"><label for="transaction-current-price" id="current-price-label">目前現價 <span class="optional-label">可修改</span></label><div class="input-with-prefix"><span id="price-currency">NT$</span><input id="transaction-current-price" name="currentPrice" type="number" min="0" step="any" placeholder="搜尋股票後自動帶入" /></div><small class="field-help" id="current-price-help" hidden></small></div>
+        <div class="transaction-preview" id="transaction-preview"><span>預估交易金額</span><strong id="preview-amount">—</strong></div>
+        <p class="dialog-error" id="transaction-error" role="alert"></p>
+        <div class="dialog-actions"><button class="button button-outline" type="button" data-close="transaction-dialog">取消</button><button class="button button-primary" type="submit" id="save-transaction">確認新增</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="app-dialog compact-dialog" id="edit-dialog">
+      <form id="edit-form">
+        <div class="dialog-heading"><div><p class="eyebrow">HOLDING DETAILS</p><h2>編輯庫存資料</h2></div><button type="button" class="dialog-close" data-close="edit-dialog" aria-label="關閉">×</button></div>
+        <input type="hidden" name="id" />
+        <div class="form-grid">
+          <div class="form-field"><label for="edit-symbol">股票代號</label><input id="edit-symbol" name="symbol" required /></div>
+          <div class="form-field"><label for="edit-name">股票名稱</label><input id="edit-name" name="name" required /></div>
+          <div class="form-field"><label for="edit-date">首次買入日期</label><input id="edit-date" name="date" type="date" required /></div>
+          <div class="form-field"><label for="edit-shares">持有股數</label><input id="edit-shares" name="shares" type="number" min="0.000001" step="any" required /></div>
+          <div class="form-field"><label for="edit-cost">目前總投資本金</label><input id="edit-cost" name="costBasis" type="number" min="0" step="any" required /></div>
+          <div class="form-field"><label for="edit-price">目前現價</label><input id="edit-price" name="currentPrice" type="number" min="0" step="any" required /></div>
+          <div class="form-field"><label for="edit-fees">累計手續費</label><input id="edit-fees" name="fees" type="number" min="0" step="any" required /></div>
+        </div>
+        <div class="form-grid" id="edit-custom-fields"></div>
+        <p class="field-help">此處可直接校正庫存與成本；交易紀錄仍保留原始操作。</p><p class="dialog-error" id="edit-error" role="alert"></p>
+        <div class="dialog-actions"><button class="button button-outline" type="button" data-close="edit-dialog">取消</button><button class="button button-primary" type="submit">儲存變更</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="app-dialog details-dialog" id="holding-details-dialog">
+      <div class="dialog-heading">
+        <div><p class="eyebrow">HOLDING ACTIVITY</p><h2 id="details-title">持倉詳情</h2></div>
+        <button type="button" class="dialog-close" data-close="holding-details-dialog" aria-label="關閉">×</button>
+      </div>
+      <div class="details-summary" id="details-summary"></div>
+      <div class="details-section-heading"><h3>交易明細</h3><span id="details-transaction-count" class="count-pill">0 筆</span></div>
+      <div class="transaction-history" id="transaction-history"></div>
+      <p class="field-help" id="details-legacy-notice" role="status"></p>
+      <p class="dialog-error" id="details-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button class="button button-outline" id="details-edit-holding" type="button">編輯持倉</button>
+        <button class="button button-primary" id="details-add-transaction" type="button">＋ 新增交易</button>
+      </div>
+    </dialog>
+
+    <dialog class="app-dialog compact-dialog" id="custom-field-dialog">
+      <form id="custom-field-form">
+        <div class="dialog-heading"><div><p class="eyebrow">PERSONALIZE YOUR TABLE</p><h2>新增自訂欄位</h2></div><button type="button" class="dialog-close" data-close="custom-field-dialog" aria-label="關閉">×</button></div>
+        <div class="form-field"><label for="custom-field-name">欄位名稱</label><input id="custom-field-name" name="name" maxlength="24" placeholder="例如：預估股利、備註" required /></div>
+        <p class="field-help">自訂欄位與資料會儲存在目前選擇的儲存位置。</p>
+        <div class="dialog-actions"><button class="button button-outline" type="button" data-close="custom-field-dialog">取消</button><button class="button button-primary" type="submit">新增欄位</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="app-dialog compact-dialog settings-dialog" id="settings-dialog">
+      <form id="settings-form">
+        <input type="hidden" name="overviewCurrency" value="TWD" />
+        <div class="dialog-heading"><div><p class="eyebrow">YOUR PREFERENCES</p><h2>偏好設定</h2></div><button type="button" class="dialog-close" data-close="settings-dialog" aria-label="關閉">×</button></div>
+        <div class="settings-group"><h3>顯示語系</h3><div class="form-field"><label for="language-setting">介面語言</label><select id="language-setting" name="language"><option value="zh-TW">中文版（繁體中文）</option><option value="en-US">美語版（English）</option></select></div><p class="field-help">語系設定會自動儲存，並套用至整個投資記錄介面。</p></div>
+        <section class="settings-group" aria-labelledby="storage-mode-heading">
+          <h3 id="storage-mode-heading">資料儲存位置</h3>
+          <div class="form-field"><label for="storage-mode">儲存位置</label><select id="storage-mode"><option value="local">本機（此瀏覽器）</option><option value="cloud">雲端（共用檔案）</option></select></div>
+          <p class="field-help" id="storage-mode-status" role="status">目前使用本機儲存；資料僅保存在此瀏覽器。</p>
+          <p class="field-help">本機與雲端資料分開保留；只有成功連結並載入或建立共用檔案後，才可切換至雲端模式。雲端模式會自動同步至已啟用的檔案，並在此瀏覽器保留快取。</p>
+        </section>
+        <section class="settings-group" aria-labelledby="backup-heading">
+          <h3 id="backup-heading">資料匯出與備份</h3>
+          <p class="field-help">JSON 可完整備份並還原庫存、交易與設定；CSV 適合用試算表查看，不可還原。</p>
+          <div class="settings-actions">
+            <button class="button button-outline button-small" id="export-backup" type="button">下載 JSON 備份</button>
+            <button class="button button-outline button-small" id="export-csv" type="button">匯出 CSV</button>
+            <button class="button button-outline button-small" id="import-backup" type="button">從 JSON 還原</button>
+            <input id="import-backup-file" type="file" accept=".json,application/json" hidden />
+          </div>
+        </section>
+        <section class="settings-group" aria-labelledby="shared-file-heading">
+          <h3 id="shared-file-heading">共用雲端檔案</h3>
+          <p class="field-help">可直接按「連結並載入共用檔」選取既有 JSON。若沒有檔案，按「建立／另存共用檔」並選擇資料夾，鮮存股會自動建立含日期時間的新 JSON，不會覆寫既有檔案。檔案成功載入或建立後，即可在上方選擇雲端模式。</p>
+          <p class="field-help">支援 Google Drive for desktop、OneDrive、Dropbox 等已同步到本機的資料夾。雲端模式下編輯會自動同步；這不是即時多人協作，發現外部修改時會先提醒。</p>
+          <div class="shared-file-location"><span>檔案位置（同步資料夾內）</span><code id="shared-file-path">尚未選取同步資料夾。</code></div>
+          <p class="field-help">基於瀏覽器隱私限制，無法顯示完整磁碟路徑；上方顯示所選同步資料夾名稱與檔案相對位置。</p>
+          <p class="shared-file-status" id="shared-file-status" role="status">尚未連結共用檔案。</p>
+          <div class="settings-actions">
+            <button class="button button-outline button-small" id="shared-folder-select" type="button">選取同步資料夾</button>
+            <button class="button button-outline button-small" id="shared-file-open" type="button">連結並載入共用檔</button>
+            <button class="button button-outline button-small" id="shared-file-create" type="button">建立／另存共用檔</button>
+            <button class="button button-outline button-small" id="shared-file-load" type="button" disabled>載入共用檔</button>
+            <button class="button button-primary button-small" id="shared-file-save" type="button" disabled>儲存至共用檔</button>
+            <button class="button button-outline button-small" id="shared-file-disconnect" type="button" disabled>解除連結</button>
+          </div>
+        </section>
+        <section class="settings-group" aria-labelledby="quote-provider-heading">
+          <h3 id="quote-provider-heading">即時報價 API</h3>
+          <div class="form-field"><label for="quote-provider">報價來源</label><select id="quote-provider" name="quoteProvider"><option value="render-api">Render API（台股／美股，預設）</option><option value="yahoo">Yahoo Finance（名稱搜尋／加拿大股）</option></select></div>
+          <div class="form-field"><label for="quote-api-url">Render 報價 API 網址</label><input id="quote-api-url" name="quoteApiUrl" type="url" autocomplete="url" required /></div>
+          <p class="field-help">Render API 會依輸入的台股／美股代號即時查價；網址中的 tw_codes、us_symbols 會自動替換成目前代號。此 API 不支援公司名稱搜尋；需搜尋名稱或查詢加拿大股時，請切換 Yahoo Finance。</p>
+        </section>
+        <div class="settings-group"><h3>台股手續費</h3><div class="form-grid">
+          <div class="form-field"><label for="tw-rate">券商牌告費率 (%)</label><input id="tw-rate" name="twRate" type="number" min="0" step="any" required /></div>
+          <div class="form-field"><label for="tw-discount">折扣比例 (%)</label><input id="tw-discount" name="twDiscount" type="number" min="0" max="100" step="any" required /></div>
+          <div class="form-field"><label for="tw-minimum">最低手續費（NT$）</label><input id="tw-minimum" name="twMinimum" type="number" min="0" step="any" required /></div>
+        </div><p class="field-help">預設牌告費率 0.1425%，預設實收折扣為牌告的 28%（俗稱 2.8 折）。實際費用請依券商為準。</p></div>
+        <div class="settings-group"><h3>美股手續費與換匯</h3><div class="form-grid">
+          <div class="form-field"><label for="us-per-share">每股手續費（USD）</label><input id="us-per-share" name="usPerShare" type="number" min="0" step="any" required /></div>
+          <div class="form-field"><label for="us-minimum">單筆最低手續費（USD）</label><input id="us-minimum" name="usMinimum" type="number" min="0" step="any" required /></div>
+          <div class="form-field"><label for="fx-rate">美元兌新台幣匯率</label><input id="fx-rate" name="fxRate" type="number" min="0.000001" step="any" required /></div>
+        </div><p class="field-help">美股預設每股 USD 0.005；可依券商方案調整。匯率用於資產總覽換算。</p></div>
+        <div class="settings-group"><h3>加拿大股手續費與換匯</h3><div class="form-grid">
+          <div class="form-field"><label for="ca-per-share">每股手續費（CAD）</label><input id="ca-per-share" name="caPerShare" type="number" min="0" step="any" required /></div>
+          <div class="form-field"><label for="ca-minimum">單筆最低手續費（CAD）</label><input id="ca-minimum" name="caMinimum" type="number" min="0" step="any" required /></div>
+          <div class="form-field"><label for="cad-fx-rate">加幣兌新台幣匯率</label><input id="cad-fx-rate" name="cadFxRate" type="number" min="0.000001" step="any" required /></div>
+        </div><p class="field-help">可自行設定加拿大券商手續費與 CAD/TWD 匯率；匯率用於資產總覽換算。</p></div>
+        <p class="dialog-error" id="settings-error" role="alert"></p>
+        <div class="dialog-actions"><button class="button button-outline" type="button" data-close="settings-dialog">取消</button><button class="button button-primary" type="submit">儲存設定</button></div>
+      </form>
+    </dialog>
+    <div class="toast-region" id="toast-region" aria-live="polite"></div>
+    <script type="module" src="./js/app.js"></script>
+  </body>
+</html>
