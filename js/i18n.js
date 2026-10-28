@@ -52,7 +52,7 @@ const translations = {
   "Render API（台股／美股，預設）": "Render API (Taiwan / U.S. stocks, default)",
   "Yahoo Finance（名稱搜尋／加拿大股）": "Yahoo Finance (name search / Canadian stocks)",
   "Render 報價 API 網址": "Render Quote API URL",
-  "Render API 會依輸入的台股／美股代號即時查價；網址中的 tw_codes、us_symbols 會自動替換成目前代號。此 API 不支援公司名稱搜尋；需搜尋名稱或查詢加拿大股時，請切換 Yahoo Finance。": "Render API looks up Taiwan and U.S. stocks by ticker. The tw_codes and us_symbols URL parameters are replaced with the current ticker. It does not search by company name; switch to Yahoo Finance for name search or Canadian stocks.",
+  "Render API 會依輸入的台股／美股代號即時查價；網址中的 tw_codes、us_symbols 會自動替換成目前代號。此 API 不支援公司名稱搜尋；需搜尋名稱或查詢加拿大股時可切換 Yahoo Finance。但 GitHub Pages 可能因跨來源限制而封鎖 Yahoo 請求，建議使用預設 Render API。": "Render API looks up Taiwan and U.S. stocks by ticker. The tw_codes and us_symbols URL parameters are replaced with the current ticker. It does not search by company name; Yahoo Finance can be selected for name search or Canadian stocks. GitHub Pages may block Yahoo requests due to CORS, so the default Render API is recommended.",
   "Render 報價 API 請填寫有效的 HTTPS 網址。": "Enter a valid HTTPS URL for the Render Quote API.",
   "Render 報價 API 網址無效，請至偏好設定確認。": "The Render Quote API URL is invalid. Check Preferences.",
   "Render 報價 API 必須使用有效的 HTTPS 網址。": "The Render Quote API must use a valid HTTPS URL.",
