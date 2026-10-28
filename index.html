@@ -247,7 +247,7 @@
           <h3 id="quote-provider-heading">即時報價 API</h3>
           <div class="form-field"><label for="quote-provider">報價來源</label><select id="quote-provider" name="quoteProvider"><option value="render-api">Render API（台股／美股，預設）</option><option value="yahoo">Yahoo Finance（名稱搜尋／加拿大股）</option></select></div>
           <div class="form-field"><label for="quote-api-url">Render 報價 API 網址</label><input id="quote-api-url" name="quoteApiUrl" type="url" autocomplete="url" required /></div>
-          <p class="field-help">Render API 會依輸入的台股／美股代號即時查價；網址中的 tw_codes、us_symbols 會自動替換成目前代號。此 API 不支援公司名稱搜尋；需搜尋名稱或查詢加拿大股時，請切換 Yahoo Finance。</p>
+          <p class="field-help">Render API 會依輸入的台股／美股代號即時查價；網址中的 tw_codes、us_symbols 會自動替換成目前代號。此 API 不支援公司名稱搜尋；需搜尋名稱或查詢加拿大股時可切換 Yahoo Finance。但 GitHub Pages 可能因跨來源限制而封鎖 Yahoo 請求，建議使用預設 Render API。</p>
         </section>
         <div class="settings-group"><h3>台股手續費</h3><div class="form-grid">
           <div class="form-field"><label for="tw-rate">券商牌告費率 (%)</label><input id="tw-rate" name="twRate" type="number" min="0" step="any" required /></div>
