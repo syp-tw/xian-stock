@@ -1,5 +1,3 @@
-const isLocalDevelopment = window.location.protocol === "file:"
-  || ["localhost", "127.0.0.1"].includes(window.location.hostname);
 const isNetlify = window.location.hostname.endsWith(".netlify.app");
 const apiRoot = isNetlify ? `${window.location.origin}/quote-api` : null;
 const yahooApiRoot = apiRoot ? `${apiRoot}/yahoo` : "https://query1.finance.yahoo.com";
