@@ -1,8 +1,14 @@
-// storage.js - 本地儲存、雲端快取與狀態持久化模組
+// js/storage.js - 本地儲存、雲端快取與狀態持久化模組
 
 const STORAGE_KEY = "he-xu-stock-ledger-v1";
 const CLOUD_CACHE_KEY = `${STORAGE_KEY}-cloud-cache`;
 const STORAGE_MODE_KEY = `${STORAGE_KEY}-storage-mode`;
+
+export const DEFAULT_ACCOUNT_ID = "default";
+
+export const DEFAULT_ACCOUNTS = [
+  { id: DEFAULT_ACCOUNT_ID, name: "主要帳戶", color: "#418874" }
+];
 
 export const BASE_COLUMNS = [
   { id: "symbol", label: "股票代號+名稱 / 股數", locked: true },
@@ -93,6 +99,7 @@ function normalizeHolding(item) {
 
   return {
     id: String(item.id || crypto.randomUUID()),
+    accountId: String(item.accountId || DEFAULT_ACCOUNT_ID),
     symbol: String(item.symbol).toUpperCase(),
     name: String(item.name || item.symbol),
     market,
@@ -129,6 +136,19 @@ export function normalizeImportedState(parsed) {
     throw new Error("期初庫存資料格式不正確。");
   }
 
+  // 1. 帳戶結構向下相容遷移
+  let accounts = DEFAULT_ACCOUNTS;
+  if (Array.isArray(parsed.accounts) && parsed.accounts.length > 0) {
+    accounts = parsed.accounts.map((acc) => ({
+      id: String(acc.id || crypto.randomUUID()),
+      name: String(acc.name || "未命名帳戶"),
+      color: String(acc.color || "#418874"),
+    }));
+  }
+
+  const validAccountIds = new Set(accounts.map((a) => a.id));
+
+  // 2. 持倉資料標準化與帳戶歸戶
   const holdings = parsed.holdings.map((item) => {
     if (!isObject(item) || !String(item.symbol || "").trim()) {
       throw new Error("備份中有無效的庫存資料。");
@@ -142,9 +162,14 @@ export function normalizeImportedState(parsed) {
       && !Number.isFinite(Number(item.dailyChangePerShare))) {
       throw new Error("備份中有無效的庫存數值。");
     }
-    return normalizeHolding(item);
+    const normalized = normalizeHolding(item);
+    if (normalized && !validAccountIds.has(normalized.accountId)) {
+      normalized.accountId = accounts[0].id;
+    }
+    return normalized;
   }).filter((item) => item && item.shares > 0);
 
+  // 3. 自訂欄位
   const customFields = (parsed.customFields || []).map((field) => {
     if (!isObject(field) || !String(field.id || "").trim() || !String(field.name || "").trim()) {
       throw new Error("備份中有無效的自訂欄位。");
@@ -152,11 +177,17 @@ export function normalizeImportedState(parsed) {
     return { id: String(field.id), name: String(field.name) };
   });
 
+  // 4. 交易紀錄標準化與帳戶歸戶
   const transactions = parsed.transactions.map((transaction) => {
     if (!isObject(transaction)) throw new Error("備份中有無效的交易資料。");
-    return transaction;
+    const accId = String(transaction.accountId || DEFAULT_ACCOUNT_ID);
+    return {
+      ...transaction,
+      accountId: validAccountIds.has(accId) ? accId : accounts[0].id,
+    };
   });
 
+  // 5. 偏好設定
   const settings = { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) };
   for (const key of ["twRate", "twDiscount", "twMinimum", "usPerShare", "usMinimum", "fxRate", "caPerShare", "caMinimum", "cadFxRate"]) {
     if (!Number.isFinite(Number(settings[key])) || Number(settings[key]) < 0) {
@@ -178,6 +209,8 @@ export function normalizeImportedState(parsed) {
   settings.hiddenColumns = Array.isArray(settings.hiddenColumns) ? settings.hiddenColumns : DEFAULT_SETTINGS.hiddenColumns;
 
   return {
+    accounts,
+    activeAccountId: parsed.activeAccountId || "all",
     holdings,
     customFields,
     settings,
@@ -191,6 +224,8 @@ export function loadState(mode = "local") {
     const raw = localStorage.getItem(mode === "cloud" ? CLOUD_CACHE_KEY : STORAGE_KEY);
     if (!raw) {
       return {
+        accounts: [...DEFAULT_ACCOUNTS],
+        activeAccountId: "all",
         holdings: [],
         customFields: [],
         settings: { ...DEFAULT_SETTINGS },
@@ -200,11 +235,23 @@ export function loadState(mode = "local") {
     }
     const parsed = JSON.parse(raw);
     if (!isObject(parsed)) throw new Error("儲存資料格式不正確。");
+
+    let accounts = DEFAULT_ACCOUNTS;
+    if (Array.isArray(parsed.accounts) && parsed.accounts.length > 0) {
+      accounts = parsed.accounts.map((acc) => ({
+        id: String(acc.id || crypto.randomUUID()),
+        name: String(acc.name || "主要帳戶"),
+        color: String(acc.color || "#418874"),
+      }));
+    }
+
     const fields = Array.isArray(parsed.customFields)
       ? parsed.customFields.filter((field) => isObject(field) && field.id && field.name).map((field) => ({ id: String(field.id), name: String(field.name) }))
       : [];
 
     return {
+      accounts,
+      activeAccountId: parsed.activeAccountId || "all",
       holdings: Array.isArray(parsed.holdings) ? parsed.holdings.map(normalizeHolding).filter((item) => item && item.shares > 0) : [],
       customFields: fields,
       settings: {
@@ -219,18 +266,29 @@ export function loadState(mode = "local") {
         columnOrder: Array.isArray(parsed.settings?.columnOrder) ? parsed.settings.columnOrder : DEFAULT_SETTINGS.columnOrder,
         hiddenColumns: Array.isArray(parsed.settings?.hiddenColumns) ? parsed.settings.hiddenColumns : DEFAULT_SETTINGS.hiddenColumns,
       },
-      transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
+      transactions: Array.isArray(parsed.transactions) ? parsed.transactions.map((t) => ({ ...t, accountId: t.accountId || DEFAULT_ACCOUNT_ID })) : [],
       openingBalances: isObject(parsed.openingBalances) ? parsed.openingBalances : {},
     };
   } catch (error) {
     console.error("無法讀取已儲存的存股資料：", error);
-    return { holdings: [], customFields: [], settings: { ...DEFAULT_SETTINGS }, transactions: [], openingBalances: {}, storageError: true };
+    return {
+      accounts: [...DEFAULT_ACCOUNTS],
+      activeAccountId: "all",
+      holdings: [],
+      customFields: [],
+      settings: { ...DEFAULT_SETTINGS },
+      transactions: [],
+      openingBalances: {},
+      storageError: true
+    };
   }
 }
 
 export function saveState(state, mode = "local") {
   try {
     const serializable = {
+      accounts: state.accounts || DEFAULT_ACCOUNTS,
+      activeAccountId: state.activeAccountId || "all",
       holdings: state.holdings,
       customFields: state.customFields,
       settings: state.settings,

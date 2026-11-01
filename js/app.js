@@ -1,9 +1,12 @@
-// app.js - 主入口模組（整合 UI 表格、投資總覽、雲端同步與自訂欄位排序）
+// js/app.js - 主入口模組（整合多帳戶系統、UI 表格、投資總覽、雲端同步與自訂欄位排序）
 import { getHoldingMetrics, getPortfolioMetrics } from "./calculations.js";
 import { parseBackup, serializeBackup, serializeCsv } from "./backup.js";
 import { applyTranslations, formatMoney, formatQuantity, formatTwd, locale, translateText } from "./i18n.js";
-import { loadState, loadStorageMode, saveState, saveStorageMode, BASE_COLUMNS, DEFAULT_SETTINGS } from "./storage.js";
-import { fetchQuote } from "./quotes.js";
+import { 
+  loadState, loadStorageMode, saveState, saveStorageMode, 
+  BASE_COLUMNS, DEFAULT_SETTINGS, DEFAULT_ACCOUNT_ID, DEFAULT_ACCOUNTS 
+} from "./storage.js";
+import { fetchQuote, getStockName } from "./quotes.js";
 import { 
   normalizeSymbol, ledgerKey, transactionsForHolding, 
   holdingBalance, rebuildHolding, makeId, today 
@@ -14,18 +17,41 @@ import { TransactionDialog } from "./dialog-transaction.js";
 let storageMode = loadStorageMode();
 const state = loadState(storageMode);
 
-// 關鍵快取修復：自動補齊舊版 LocalStorage 缺少的新官方欄位（例如 dividends）
+// 1. 自動補齊舊版 LocalStorage 缺少的新官方欄位（例如 dividends）
 if (Array.isArray(state.settings.columnOrder) && !state.settings.columnOrder.includes("dividends")) {
   const defIdx = DEFAULT_SETTINGS.columnOrder.indexOf("dividends");
   state.settings.columnOrder.splice(defIdx >= 0 ? defIdx : state.settings.columnOrder.length - 1, 0, "dividends");
   saveState(state, storageMode);
 }
 
+// 2. 核心清洗：徹底清除「未買過、持股為 0 或已出清」的殘留庫存標的
+const beforePurgeCount = state.holdings.length;
+state.holdings = state.holdings.filter((h) => Number(h.shares) > 0);
+if (state.holdings.length !== beforePurgeCount) {
+  saveState(state, storageMode);
+}
+
+// 3. 自動校正既有持倉中文名稱
+let hasRepairedNames = false;
+for (const holding of state.holdings) {
+  if (!holding.name || holding.name === holding.symbol || holding.name === holding.symbol.replace(/\.(TW|TWO)$/i, "")) {
+    const knownName = getStockName(holding.symbol);
+    if (knownName) {
+      holding.name = knownName;
+      hasRepairedNames = true;
+    }
+  }
+}
+if (hasRepairedNames) saveState(state, storageMode);
+
 const elements = {
   headerRow: document.querySelector("#holdings-header-row"),
   body: document.querySelector("#holdings-body"),
   emptyState: document.querySelector("#empty-state"),
   toastRegion: document.querySelector("#toast-region"),
+  accountSelector: document.querySelector("#account-selector"),
+  currentViewLabel: document.querySelector("#current-view-label"),
+  summaryAccountTitle: document.querySelector("#summary-account-title"),
 };
 
 let activeFilter = "all";
@@ -51,6 +77,7 @@ function replaceState(nextState, { syncCloud = true } = {}) {
   const previousState = { ...state };
   Object.assign(state, nextState);
   delete state.storageError;
+  state.holdings = state.holdings.filter((h) => Number(h.shares) > 0);
   if (!saveState(state, storageMode)) {
     Object.assign(state, previousState);
     throw new Error("無法儲存匯入資料，原有資料未變更。");
@@ -72,7 +99,6 @@ function downloadFile(filename, content, type) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-// 實例化雲端同步管理器
 const cloudSync = new CloudSyncManager({
   getState: () => state,
   onStateReplace: replaceState,
@@ -80,13 +106,13 @@ const cloudSync = new CloudSyncManager({
   toast,
 });
 
-// 實例化交易彈窗控制器
 const txDialog = new TransactionDialog({
   getState: () => state,
   onTransactionSaved: (activeHolding) => {
+    state.holdings = state.holdings.filter((h) => Number(h.shares) > 0);
     persist();
     render();
-    if (activeHolding) openHoldingDetails(activeHolding);
+    if (activeHolding && activeHolding.shares > 0) openHoldingDetails(activeHolding);
   },
   onOpenDetails: (holding) => openHoldingDetails(holding),
   toast,
@@ -138,6 +164,132 @@ async function switchStorageMode(nextMode) {
   }
 }
 
+// ----------------- 多帳戶管理與選單控制 -----------------
+const ACCOUNT_COLORS = ["#418874", "#3b73af", "#b35c44", "#7b5cb7", "#a07830", "#3a8589"];
+
+function getAccountById(accountId) {
+  return state.accounts?.find((a) => a.id === accountId) || { id: accountId, name: "主要帳戶", color: "#418874" };
+}
+
+function renderAccountSelector() {
+  const selector = elements.accountSelector;
+  if (!selector) return;
+
+  selector.replaceChildren();
+
+  const allOption = document.createElement("option");
+  allOption.value = "all";
+  allOption.textContent = translateText("🌐 全部帳戶總覽", state.settings.language);
+  allOption.selected = state.activeAccountId === "all";
+  selector.append(allOption);
+
+  for (const acc of (state.accounts || [])) {
+    const opt = document.createElement("option");
+    opt.value = acc.id;
+    opt.textContent = `💼 ${acc.name}`;
+    opt.selected = state.activeAccountId === acc.id;
+    selector.append(opt);
+  }
+
+  // 頂部麵包屑標籤與總覽標題聯動
+  const activeAcc = state.activeAccountId === "all" ? null : getAccountById(state.activeAccountId);
+  if (elements.currentViewLabel) {
+    elements.currentViewLabel.textContent = activeAcc
+      ? activeAcc.name
+      : translateText("全部帳戶總覽", state.settings.language);
+  }
+  if (elements.summaryAccountTitle) {
+    elements.summaryAccountTitle.textContent = activeAcc
+      ? `${translateText("目前投資總市值", state.settings.language)}（${activeAcc.name}）`
+      : `${translateText("目前投資總市值", state.settings.language)}（${translateText("全部帳戶", state.settings.language)}）`;
+  }
+}
+
+function openAccountManager() {
+  const dialog = document.querySelector("#accounts-dialog");
+  const list = document.querySelector("#accounts-list");
+  if (!dialog || !list) return;
+
+  function renderList() {
+    list.replaceChildren();
+    for (const acc of (state.accounts || [])) {
+      const li = document.createElement("li");
+      li.className = "account-item";
+
+      const left = document.createElement("div");
+      left.className = "account-item-left";
+      const dot = document.createElement("span");
+      dot.className = "account-color-dot";
+      dot.style.backgroundColor = acc.color || "#418874";
+      const name = document.createElement("strong");
+      name.textContent = acc.name;
+      left.append(dot, name);
+
+      // 當帳戶數量大於 1 時允許刪除，並具備防呆機制
+      if ((state.accounts || []).length > 1) {
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.className = "row-action danger";
+        delBtn.textContent = translateText("刪除", state.settings.language);
+        delBtn.addEventListener("click", () => {
+          const hasHoldings = state.holdings.some((h) => (h.accountId || DEFAULT_ACCOUNT_ID) === acc.id && Number(h.shares) > 0);
+          const hasTransactions = state.transactions.some((t) => (t.accountId || DEFAULT_ACCOUNT_ID) === acc.id);
+
+          if (hasHoldings || hasTransactions) {
+            alert(translateText("此帳戶內仍有持倉或交易紀錄，無法直接刪除。請先將持倉出清或轉移。", state.settings.language));
+            return;
+          }
+
+          if (window.confirm(translateText(`確定刪除「${acc.name}」帳戶？`, state.settings.language))) {
+            state.accounts = state.accounts.filter((a) => a.id !== acc.id);
+            if (state.activeAccountId === acc.id) {
+              state.activeAccountId = "all";
+            }
+            persist();
+            renderAccountSelector();
+            renderList();
+            render();
+            toast(`已刪除「${acc.name}」帳戶。`);
+          }
+        });
+        li.append(left, delBtn);
+      } else {
+        li.append(left);
+      }
+
+      list.append(li);
+    }
+  }
+
+  const addForm = document.querySelector("#add-account-form");
+  if (addForm) {
+    addForm.onsubmit = (e) => {
+      e.preventDefault();
+      const input = document.querySelector("#new-account-name");
+      const name = input?.value.trim();
+      if (!name) return;
+
+      if (state.accounts.some((a) => a.name.toLowerCase() === name.toLowerCase())) {
+        toast("已經有同名的投資帳戶。", true);
+        return;
+      }
+
+      const newId = makeId();
+      const nextColor = ACCOUNT_COLORS[state.accounts.length % ACCOUNT_COLORS.length];
+      state.accounts.push({ id: newId, name, color: nextColor });
+      input.value = "";
+      persist();
+      renderAccountSelector();
+      renderList();
+      render();
+      toast(`已新增「${name}」帳戶。`);
+    };
+  }
+
+  renderList();
+  dialog.showModal();
+}
+
 // ----------------- 欄位配置與排序核心邏輯 -----------------
 function getActiveColumns() {
   const customMap = new Map(state.customFields.map((f) => [f.id, { id: f.id, label: f.name, isCustom: true }]));
@@ -151,14 +303,12 @@ function getActiveColumns() {
     else if (customMap.has(colId)) combined.push(customMap.get(colId));
   }
 
-  // 自動補齊新加入但尚未存在於 columnOrder 的自訂欄位
   for (const [id, field] of customMap.entries()) {
     if (!combined.some((c) => c.id === id)) {
       combined.splice(combined.length - 1, 0, field);
     }
   }
 
-  // 自動補齊系統升級新增但未寫入舊快取的官方欄位
   for (const baseCol of BASE_COLUMNS) {
     if (!combined.some((c) => c.id === baseCol.id)) {
       const defIdx = DEFAULT_SETTINGS.columnOrder.indexOf(baseCol.id);
@@ -328,25 +478,42 @@ function makeHoldingRow(holding, activeColumns) {
   });
 
   const metrics = getHoldingMetrics(holding);
+  const autoResolvedName = getStockName(holding.symbol) || holding.name || holding.symbol;
+  const holdingAccount = getAccountById(holding.accountId || DEFAULT_ACCOUNT_ID);
 
   for (const col of activeColumns) {
     if (col.id === "symbol") {
-      // 股票代號+名稱 / 股數 複合呈現
       const nameCell = document.createElement("td");
       const nameWrap = document.createElement("div");
       nameWrap.className = "holding-name";
+
       const avatar = document.createElement("span");
-      avatar.className = `stock-avatar${holding.market !== "TW" ? " us" : ""}`;
+      avatar.className = `stock-avatar${holding.market === "US" ? " us" : holding.market === "CA" ? " ca" : ""}`;
       avatar.textContent = holding.market === "US" ? "US" : holding.market === "CA" ? "CA" : "台";
+
       const copy = document.createElement("span");
       copy.className = "stock-copy";
+
+      const titleRow = document.createElement("div");
+      titleRow.className = "stock-title-row";
       const symbol = document.createElement("strong");
       symbol.textContent = holding.symbol;
+      titleRow.append(symbol);
+
+      // 當位於「全部帳戶總覽」時，標記所屬帳戶名稱徽章
+      if (state.activeAccountId === "all") {
+        const badge = document.createElement("span");
+        badge.className = "account-badge";
+        badge.textContent = holdingAccount.name;
+        titleRow.append(badge);
+      }
+
       const subInfo = document.createElement("small");
       const formattedShares = formatQuantity(holding.shares, state.settings.language);
       const sharesUnit = translateText("股", state.settings.language);
-      subInfo.textContent = `${holding.name} · ${formattedShares} ${sharesUnit}`;
-      copy.append(symbol, subInfo);
+      subInfo.textContent = `${autoResolvedName} · ${formattedShares} ${sharesUnit}`;
+
+      copy.append(titleRow, subInfo);
       nameWrap.append(avatar, copy);
       nameCell.append(nameWrap);
       row.append(nameCell);
@@ -402,9 +569,45 @@ function makeHoldingRow(holding, activeColumns) {
 function render() {
   const activeColumns = getActiveColumns();
   renderTableHeaders();
+  if (typeof renderAccountSelector === "function") renderAccountSelector();
 
   if (elements.body) elements.body.replaceChildren();
-  const visible = state.holdings.filter((holding) => activeFilter === "all" || holding.market === activeFilter);
+
+  // 1. 取得目前帳戶視角下實際有持股 (shares > 0) 的清單
+  const accountScopedHoldings = state.holdings.filter((h) => 
+    Number(h.shares) > 0 && 
+    (!state.activeAccountId || state.activeAccountId === "all" || (h.accountId || DEFAULT_ACCOUNT_ID) === state.activeAccountId)
+  );
+
+  // 2. 核心：檢查各市場是否持有股票，未持有則隱藏該市場標籤
+  const hasMarket = {
+    TW: accountScopedHoldings.some((h) => h.market === "TW"),
+    US: accountScopedHoldings.some((h) => h.market === "US"),
+    CA: accountScopedHoldings.some((h) => h.market === "CA"),
+  };
+
+  const marketTabs = document.querySelectorAll(".table-tab[data-filter]");
+  marketTabs.forEach((tab) => {
+    const filter = tab.dataset.filter;
+    if (filter === "all") {
+      tab.hidden = false;
+    } else {
+      tab.hidden = !hasMarket[filter]; // 無持股即隱藏
+    }
+  });
+
+  // 安全回退：若當前所在的分頁市場已無任何持股，自動跳回「全部持倉」
+  if (activeFilter !== "all" && !hasMarket[activeFilter]) {
+    activeFilter = "all";
+  }
+
+  // 同步更新分頁按鈕的 active 樣式
+  marketTabs.forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.filter === activeFilter);
+  });
+
+  // 3. 依選定市場分頁過濾
+  const visible = accountScopedHoldings.filter((holding) => activeFilter === "all" || holding.market === activeFilter);
   const sorted = getSortedHoldings(visible);
 
   for (const holding of sorted) {
@@ -423,7 +626,8 @@ function render() {
   const tableFooterCount = document.querySelector("#table-footer-count");
   if (tableFooterCount) tableFooterCount.textContent = `顯示 ${visible.length} 筆持倉`;
 
-  const totals = getPortfolioMetrics(state.holdings, state.settings);
+  // 4. 總覽指標動態計算
+  const totals = getPortfolioMetrics(accountScopedHoldings, state.settings);
   const isUsd = state.settings.overviewCurrency === "USD";
   const fxRate = Number(state.settings.fxRate) > 0 ? Number(state.settings.fxRate) : 32.5;
 
@@ -472,7 +676,6 @@ function render() {
     setProfitColor(profitElement, totals.profit);
   }
 
-  // 總覽卡片：累計股息顯示
   const dividendsElement = document.querySelector("#total-dividends");
   if (dividendsElement) {
     dividendsElement.textContent = formatOverviewAmount(totals.dividends || 0);
@@ -493,14 +696,14 @@ function render() {
   }
 
   const holdingCount = document.querySelector("#holding-count");
-  if (holdingCount) holdingCount.innerHTML = `${state.holdings.length} <small>檔</small>`;
+  if (holdingCount) holdingCount.innerHTML = `${accountScopedHoldings.length} <small>檔</small>`;
 
   applyTranslations(state.settings.language);
 }
 
 // ----------------- 欄位順序自訂彈窗 -----------------
 function openColumnManager() {
-  let dialog = document.querySelector("#column-manager-dialog");
+  const dialog = document.querySelector("#column-manager-dialog");
   if (!dialog) return;
 
   function renderColumnList() {
@@ -620,7 +823,12 @@ function openHoldingDetails(holding) {
   const metrics = getHoldingMetrics(holding);
   const dialog = document.querySelector("#holding-details-dialog");
   const detailsTitle = document.querySelector("#details-title");
-  if (detailsTitle) detailsTitle.textContent = `${holding.symbol}｜${holding.name}`;
+  const autoResolvedName = getStockName(holding.symbol) || holding.name || holding.symbol;
+  const holdingAccount = getAccountById(holding.accountId || DEFAULT_ACCOUNT_ID);
+  
+  if (detailsTitle) {
+    detailsTitle.textContent = `${holding.symbol}｜${autoResolvedName}（${holdingAccount.name}）`;
+  }
 
   const summary = document.querySelector("#details-summary");
   summary?.replaceChildren(
@@ -734,9 +942,10 @@ function deleteTransaction(holding, transaction) {
   const [removed] = state.transactions.splice(originalIndex, 1);
   try {
     const updatedHolding = rebuildHolding(holding, state);
+    state.holdings = state.holdings.filter((h) => Number(h.shares) > 0);
     persist();
     render();
-    if (updatedHolding) openHoldingDetails(updatedHolding);
+    if (updatedHolding && updatedHolding.shares > 0) openHoldingDetails(updatedHolding);
     else document.querySelector("#holding-details-dialog")?.close();
     toast(transaction.locked
       ? "舊版／校正交易明細已刪除；目前持倉股數與成本未變更。"
@@ -750,7 +959,9 @@ function deleteTransaction(holding, transaction) {
 }
 
 function deleteHolding(holding) {
-  if (!window.confirm(translateText(`確定刪除 ${holding.symbol}（${holding.name}）及其持倉資料？`, state.settings.language))) return;
+  const resolvedName = getStockName(holding.symbol) || holding.name || holding.symbol;
+  const holdingAccount = getAccountById(holding.accountId || DEFAULT_ACCOUNT_ID);
+  if (!window.confirm(translateText(`確定刪除 ${holding.symbol}（${resolvedName} - ${holdingAccount.name}）及其持倉資料？`, state.settings.language))) return;
   state.holdings = state.holdings.filter((item) => item.id !== holding.id);
   persist();
   render();
@@ -763,7 +974,7 @@ function openEditDialog(holding) {
   for (const [key, value] of Object.entries({
     id: holding.id,
     symbol: holding.symbol,
-    name: holding.name,
+    name: getStockName(holding.symbol) || holding.name,
     date: holding.buyDate,
     shares: holding.shares,
     costBasis: holding.costBasis,
@@ -834,18 +1045,21 @@ function validatePositiveFormValues(form, names, errorElement) {
   return true;
 }
 
-async function refreshHoldingQuote(holding) {
+// ----------------- 安全並行報價查詢（二階段原子化更新） -----------------
+async function safeFetchQuoteUpdate(holding) {
   try {
     const result = await fetchQuote(holding.symbol, undefined, state.settings);
-    const target = state.holdings.find((item) => item.id === holding.id);
-    if (!target) return false;
-    target.currentPrice = result.price;
-    target.dailyChangePerShare = result.dailyChangePerShare;
-    target.updatedAt = new Date().toISOString();
-    return true;
+    return {
+      id: holding.id,
+      success: true,
+      price: result.price,
+      dailyChangePerShare: result.dailyChangePerShare,
+      name: result.name,
+      updatedAt: new Date().toISOString(),
+    };
   } catch (error) {
     console.error(`更新 ${holding.symbol} 報價失敗：`, error);
-    return false;
+    return { id: holding.id, success: false };
   }
 }
 
@@ -870,6 +1084,13 @@ document.querySelector("#add-holding")?.addEventListener("click", () => txDialog
 document.querySelector("#add-holding-table")?.addEventListener("click", () => txDialog.open());
 document.querySelector("#empty-add-holding")?.addEventListener("click", () => txDialog.open());
 document.querySelector("#manage-columns-btn")?.addEventListener("click", openColumnManager);
+document.querySelector("#manage-accounts-btn")?.addEventListener("click", openAccountManager);
+
+elements.accountSelector?.addEventListener("change", (e) => {
+  state.activeAccountId = e.target.value;
+  persist();
+  render();
+});
 
 document.querySelectorAll("[data-overview-currency]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -921,13 +1142,22 @@ document.querySelector("#edit-form")?.addEventListener("submit", (event) => {
   const holding = state.holdings.find((item) => item.id === form.elements.id?.value);
   if (!holding) return;
   const newSymbol = normalizeSymbol(form.elements.symbol?.value || "", holding.market);
-  const duplicate = state.holdings.find((item) => item.id !== holding.id && item.symbol.toUpperCase() === newSymbol && item.market === holding.market);
+  
+  // 重複性檢查：限定於同一帳戶內
+  const duplicate = state.holdings.find((item) => 
+    item.id !== holding.id && 
+    item.symbol.toUpperCase() === newSymbol && 
+    item.market === holding.market &&
+    (item.accountId || DEFAULT_ACCOUNT_ID) === (holding.accountId || DEFAULT_ACCOUNT_ID)
+  );
+
   if (duplicate) {
-    if (error) error.textContent = translateText("此股號已有其他持倉，請編輯既有持倉以避免重複資料。", state.settings.language);
+    if (error) error.textContent = translateText("此帳戶內該股號已有其他持倉，請編輯既有持倉以避免重複資料。", state.settings.language);
     return;
   }
+  
   holding.symbol = newSymbol;
-  holding.name = form.elements.name?.value.trim() || newSymbol;
+  holding.name = form.elements.name?.value.trim() || getStockName(newSymbol) || newSymbol;
   holding.buyDate = form.elements.date?.value;
   holding.shares = Number(form.elements.shares?.value);
   holding.costBasis = Number(form.elements.costBasis?.value);
@@ -1080,23 +1310,42 @@ document.querySelector("#shared-file-disconnect")?.addEventListener("click", () 
   cloudSync.runAction(() => cloudSync.disconnect(storageMode), storageMode);
 });
 
+// 二階段報價批次更新：避免並行抓取過程中的狀態衝突與覆蓋
 document.querySelector("#refresh-quotes")?.addEventListener("click", async (event) => {
   const button = event.currentTarget;
-  if (!state.holdings.length) return toast("目前沒有庫存可更新報價。");
+  const activeHoldings = state.holdings.filter((h) => Number(h.shares) > 0);
+  if (!activeHoldings.length) return toast("目前沒有庫存可更新報價。");
   
   button.classList.add("loading");
   button.disabled = true;
 
   try {
-    const results = await mapWithConcurrency(state.holdings, 3, refreshHoldingQuote);
+    const quoteResults = await mapWithConcurrency(activeHoldings, 3, safeFetchQuoteUpdate);
+    
+    // 原子化合併更新
+    let successCount = 0;
+    for (const update of quoteResults) {
+      if (update.success) {
+        const target = state.holdings.find((h) => h.id === update.id);
+        if (target) {
+          target.currentPrice = update.price;
+          target.dailyChangePerShare = update.dailyChangePerShare;
+          target.updatedAt = update.updatedAt;
+          if (update.name && (!target.name || target.name === target.symbol)) {
+            target.name = update.name;
+          }
+          successCount++;
+        }
+      }
+    }
+
     persist();
     render();
     
-    const successes = results.filter(Boolean).length;
-    if (successes === results.length) {
-      toast(`已更新 ${successes} 檔股票報價。`);
+    if (successCount === activeHoldings.length) {
+      toast(`已更新 ${successCount} 檔股票報價。`);
     } else {
-      toast(`${successes} / ${results.length} 檔報價更新成功，失敗項目請稍後重試。`, successes === 0);
+      toast(`${successCount} / ${activeHoldings.length} 檔報價更新成功，失敗項目請稍後重試。`, successCount === 0);
     }
   } finally {
     button.classList.remove("loading");

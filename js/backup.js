@@ -1,7 +1,8 @@
-import { normalizeImportedState } from "./storage.js";
+// js/backup.js - 備份導出、還原解析與 CSV 試算表序列化模組
+import { normalizeImportedState, DEFAULT_ACCOUNT_ID } from "./storage.js";
 
 const BACKUP_FORMAT = "xian-stock-backup";
-const BACKUP_VERSION = 1;
+const BACKUP_VERSION = 2; // 升級為支援多帳號架構版本
 
 export function serializeBackup(state) {
   return JSON.stringify({
@@ -9,6 +10,8 @@ export function serializeBackup(state) {
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
     data: {
+      accounts: state.accounts,
+      activeAccountId: state.activeAccountId,
       holdings: state.holdings,
       customFields: state.customFields,
       settings: state.settings,
@@ -26,7 +29,7 @@ export function parseBackup(text) {
     throw new Error("檔案不是有效的 JSON 備份。");
   }
   if (parsed?.format === BACKUP_FORMAT) {
-    if (parsed.version !== BACKUP_VERSION) throw new Error("備份版本不支援，請更新應用程式後再試。");
+    // 支援 v1 與 v2 版本無損遷移
     return normalizeImportedState(parsed.data);
   }
   return normalizeImportedState(parsed);
@@ -40,35 +43,45 @@ function csvCell(value) {
 
 export function serializeCsv(state) {
   const columns = [
-    "record_type", "id", "symbol", "name", "market", "date", "type", "quantity", "price",
+    "record_type", "account_id", "id", "symbol", "name", "market", "date", "type", "quantity", "price",
     "fee", "ratio", "current_price", "shares", "cost_basis", "realized_profit", "dividends", "data",
   ];
   const rows = [
     columns,
-    ["metadata", "", "", "", "", new Date().toISOString(), "鮮存股 CSV 匯出"],
+    ["metadata", "", "", "", "", "", new Date().toISOString(), "鮮存股 CSV 匯出（含多帳號資料）"],
   ];
+
+  for (const acc of (state.accounts || [])) {
+    rows.push(["account", acc.id, "", acc.name, "", "", "", "", "", "", "", "", "", "", "", "", "", JSON.stringify(acc)]);
+  }
+
   for (const holding of state.holdings) {
     rows.push([
-      "holding", holding.id, holding.symbol, holding.name, holding.market, holding.buyDate, "",
+      "holding", holding.accountId || DEFAULT_ACCOUNT_ID, holding.id, holding.symbol, holding.name, holding.market, holding.buyDate, "",
       "", "", holding.fees, "", holding.currentPrice, holding.shares, holding.costBasis,
       holding.realizedProfit, holding.dividends, JSON.stringify(holding),
     ]);
   }
+
   for (const transaction of state.transactions) {
     rows.push([
-      "transaction", transaction.id, transaction.symbol, transaction.name, transaction.market,
+      "transaction", transaction.accountId || DEFAULT_ACCOUNT_ID, transaction.id, transaction.symbol, transaction.name, transaction.market,
       transaction.date, transaction.type, transaction.quantity, transaction.price, transaction.fee,
       transaction.ratio, transaction.currentPrice, "", "", "", "", JSON.stringify(transaction),
     ]);
   }
+
   for (const field of state.customFields) {
-    rows.push(["custom_field", field.id, "", field.name]);
+    rows.push(["custom_field", "", field.id, "", field.name]);
   }
+
   for (const [key, value] of Object.entries(state.settings)) {
-    rows.push(["setting", key, "", "", "", "", "", "", "", "", "", "", "", "", "", "", value]);
+    rows.push(["setting", "", key, "", "", "", "", "", "", "", "", "", "", "", "", "", "", value]);
   }
+
   for (const [id, balance] of Object.entries(state.openingBalances || {})) {
-    rows.push(["opening_balance", id, "", "", "", "", "", "", "", "", "", "", "", "", "", "", JSON.stringify(balance)]);
+    rows.push(["opening_balance", "", id, "", "", "", "", "", "", "", "", "", "", "", "", "", "", JSON.stringify(balance)]);
   }
+
   return `\uFEFF${rows.map((row) => columns.map((_, index) => csvCell(row[index])).join(",")).join("\r\n")}`;
 }

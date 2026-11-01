@@ -1,4 +1,4 @@
-// i18n.js - 多國語言、幣別格式化與介面文字對照模組
+// js/i18n.js - 多國語言、幣別格式化與介面文字對照模組
 
 export const locale = {
   currency: {
@@ -51,15 +51,14 @@ const translations = {
   "依庫存現價估算・美元": "Estimated from current prices · U.S. dollars",
   "即時報價 API": "Live Quote API",
   "報價來源": "Quote Provider",
-  "Render API（台股／美股，預設）": "Render API (Taiwan / U.S. stocks, default)",
-  "Yahoo Finance（名稱搜尋／加拿大股）": "Yahoo Finance (name search / Canadian stocks)",
+  "Render API（台股／美股代號，加股自動切換）": "Render API (TW/US Ticker, Auto-switch for Canada)",
+  "Yahoo Finance（支援台股／美股／加股，含名稱搜尋）": "Yahoo Finance (Taiwan, U.S. & Canada with Search)",
   "Render 報價 API 網址": "Render Quote API URL",
-  "Render API 會依輸入的台股／美股代號即時查價；網址中的 tw_codes、us_symbols 會自動替換成目前代號。此 API 不支援公司名稱搜尋；需搜尋名稱或查詢加拿大股時可切換 Yahoo Finance。但 GitHub Pages 可能因跨來源限制而封鎖 Yahoo 請求，建議使用預設 Render API。": "Render API looks up Taiwan and U.S. stocks by ticker. The tw_codes and us_symbols URL parameters are replaced with the current ticker. It does not search by company name; Yahoo Finance can be selected for name search or Canadian stocks. GitHub Pages may block Yahoo requests due to CORS, so the default Render API is recommended.",
+  "Yahoo Finance 支援台股、美股與加拿大股完整查價及中英文名稱搜尋。Render API 為專屬自建服務；若在 Render 模式下查詢加拿大股，系統會智慧自動切換至 Yahoo 查詢，無須手動切換設定。": "Yahoo Finance provides quotes and name search for Taiwan, U.S., and Canadian stocks. The Render API is a custom endpoint; Canadian stocks will automatically switch to Yahoo Finance when using the Render API.",
   "Render 報價 API 請填寫有效的 HTTPS 網址。": "Enter a valid HTTPS URL for the Render Quote API.",
   "Render 報價 API 網址無效，請至偏好設定確認。": "The Render Quote API URL is invalid. Check Preferences.",
   "Render 報價 API 必須使用有效的 HTTPS 網址。": "The Render Quote API must use a valid HTTPS URL.",
   "Render 報價 API 未回傳有效股價，請確認股票代號。": "The Render Quote API returned no valid price. Check the ticker.",
-  "目前 Render 報價 API 僅支援台股與美股；加拿大股請切換至 Yahoo Finance。": "The current Render Quote API supports Taiwan and U.S. stocks only. Switch to Yahoo Finance for Canadian stocks.",
   "舊版／校正交易明細已刪除；目前持倉股數與成本未變更。": "Legacy / adjustment entry deleted. Current shares and cost basis were not changed.",
   "舊版／校正交易明細已更新；目前持倉股數與成本未變更。": "Legacy / adjustment entry updated. Current shares and cost basis were not changed.",
   "查看 ": "View ",
@@ -80,6 +79,19 @@ const translations = {
   "好好記錄每一步，讓時間成為你的隊友。": "Keep track of every step. Let time work for you.",
   "新增持倉": "Add Holding",
   "目前投資總市值": "Current Market Value",
+  "全部帳戶": "All Accounts",
+  "全部帳戶總覽": "All Accounts Overview",
+  "🌐 全部帳戶總覽": "🌐 All Accounts Overview",
+  "投資帳戶": "Account",
+  "投資帳戶管理": "Accounts Manager",
+  "建立獨立帳戶以區隔個人核心倉、定期定額或家人資產。刪除帳戶前須先清空該帳戶內之持倉與交易紀錄。": "Create accounts to organize core holdings, DCA strategies, or family assets. Clear positions before deleting an account.",
+  "新增帳戶名稱": "New Account Name",
+  "例如：定期定額倉、配偶投資帳戶": "e.g. DCA Strategy, Spouse Account",
+  "新增帳戶": "Add Account",
+  "管理投資帳戶": "Manage investment accounts",
+  "切換帳戶": "Switch Account",
+  "已經有同名的投資帳戶。": "An account with this name already exists.",
+  "此帳戶內仍有持倉或交易紀錄，無法直接刪除。請先將持倉出清或轉移。": "This account still has holdings or transactions and cannot be deleted. Clear or transfer positions first.",
   "依庫存現價估算・新台幣": "Estimated from current prices · New Taiwan dollars",
   "美元等值": "USD equivalent",
   "日損益": "Daily P/L",
@@ -97,6 +109,7 @@ const translations = {
   "正在搜尋台股、美股與加拿大股…": "Searching Taiwan, U.S. and Canadian stocks…",
   "相同股號自動合併，報價與績效一目瞭然。": "Positions with the same ticker are combined for a clear view of quotes and performance.",
   "相同股號自動合併；點選持倉列可檢視交易明細。": "Positions with the same ticker are combined. Select a holding to view its transaction history.",
+  "自訂欄位": "Customize Columns",
   "新增自訂欄位": "Add Custom Field",
   "全部持倉": "All Holdings",
   "台股": "Taiwan",
@@ -119,7 +132,6 @@ const translations = {
   "股息": "Dividends",
   "累計股息": "Total Dividends",
   "已領取現金配息": "Cash dividends received",
-  "自訂欄位": "Customize Columns",
   "自訂庫存欄位順序與顯示": "Customize Column Order & Visibility",
   "勾選以顯示欄位，點選箭頭調整欄位在表格中的左右先後順序。": "Check to show columns. Use the arrows to reorder them in the table.",
   "重設預設順序": "Reset to Default",
@@ -212,14 +224,13 @@ const translations = {
   "無法儲存儲存位置設定。": "Unable to save the storage location setting.",
   "無法讀取本機已儲存資料，未切換儲存位置。": "Unable to read local data. The storage location was not changed.",
   "資料匯出與備份": "Data Export & Backup",
-  "JSON 可完整備份並還原庫存、交易與設定；CSV 適合用試算表查看，不可還原。": "JSON backs up and restores holdings, transactions, and settings. CSV is for spreadsheets and cannot be restored.",
+  "JSON 可完整備份並還原所有投資帳戶、庫存、交易與設定；CSV 適合用試算表查看，不可還原。": "JSON backs up and restores all investment accounts, holdings, transactions, and settings. CSV is for spreadsheets and cannot be restored.",
   "下載 JSON 備份": "Download JSON Backup",
   "匯出 CSV": "Export CSV",
   "從 JSON 還原": "Restore from JSON",
   "共用雲端檔案": "Shared Cloud File",
   "可直接按「連結並載入共用檔」選取既有 JSON。若沒有檔案，按「建立／另存共用檔」並選擇資料夾，鮮存股會自動建立含日期時間的新 JSON，不會覆寫既有檔案。檔案成功載入或建立後，即可在上方選擇雲端模式。": "Select “Link & Load Shared File” to choose an existing JSON. To create a new file, select “Create / Save As Shared File” and choose a folder; Xian Stock automatically creates a new JSON with a timestamp in its name and never overwrites an existing file. After the file is linked or created, you can select Cloud above.",
   "支援 Google Drive for desktop、OneDrive、Dropbox 等已同步到本機的資料夾。雲端模式下編輯會自動同步；這不是即時多人協作，發現外部修改時會先提醒。": "Supports folders synced to this device by Google Drive for desktop, OneDrive, Dropbox, and similar services. Edits sync automatically in cloud mode. This is not real-time collaboration; external changes are flagged first.",
-  "可選取 Google Drive for desktop、OneDrive、Dropbox 等同步資料夾中的 JSON 檔案。編輯仍會先儲存在本機；需按「載入」或「儲存」與共用檔同步。這不是即時多人協作，發現外部修改時會先提醒。": "Choose a JSON file in a synced folder such as Google Drive for desktop, OneDrive, or Dropbox. Edits are saved locally first; use Load or Save to sync. This is not real-time collaboration, and external changes are flagged before overwrite.",
   "檔案位置（同步資料夾內）": "File location (within synced folder)",
   "基於瀏覽器隱私限制，無法顯示完整磁碟路徑；上方顯示所選同步資料夾名稱與檔案相對位置。": "Browser privacy restrictions prevent showing the full disk path. The selected sync folder and relative file path are shown above.",
   "尚未選取同步資料夾。": "No sync folder selected.",
@@ -342,13 +353,13 @@ const translations = {
   "請輸入股票代號。": "Enter a stock ticker.",
   "股數與價格都必須是大於 0 的有效數值。": "Shares and price must both be valid numbers greater than zero.",
   "手續費必須是有效的非負數值。": "Fees must be a valid non-negative number.",
-  "這檔股票尚無持倉，請先新增買入紀錄。": "You do not hold this stock yet. Record a purchase first.",
+  "這檔股票在此帳戶尚無持倉，請先新增買入紀錄。": "You do not hold this stock in this account yet. Record a purchase first.",
   "買入股數與價格都必須大於 0。": "Shares and purchase price must be greater than zero.",
   "賣出股數不可超過持有股數，價格必須大於 0。": "Shares sold cannot exceed shares held, and the price must be greater than zero.",
   "配息金額不得小於 0。": "Dividend amount cannot be negative.",
   "配股股數必須大於 0。": "Stock dividend shares must be greater than zero.",
   "分割比例必須大於 0。": "The split ratio must be greater than zero.",
-  "此股號已有其他持倉，請編輯既有持倉以避免重複資料。": "A holding for this ticker already exists. Edit the existing holding to avoid duplicates.",
+  "此帳戶內該股號已有其他持倉，請編輯既有持倉以避免重複資料。": "A holding for this ticker already exists in this account. Edit the existing holding to avoid duplicates.",
   "已經有同名的自訂欄位。": "A custom field with this name already exists.",
   "讀取已儲存資料時發生問題，目前顯示空白資料。": "There was a problem reading saved data. The current view is empty.",
   "新增": "Add",
@@ -408,8 +419,6 @@ export function translateText(value, language = "zh-TW") {
   if (feeEstimate) return `Estimated using ${feeEstimate[1] === "台股" ? "Taiwan" : feeEstimate[1] === "加拿大股" ? "Canadian" : "U.S."} stock fee settings. You can adjust it.`;
   const splitPreview = value.match(/^持股數將乘以 (.+)$/);
   if (splitPreview) return `Shares will be multiplied by ${splitPreview[1]}`;
-  const lookup = value.match(/^輸入(.+)$/);
-  if (lookup) return `Enter ${lookup[1]}`;
   const removedHolding = value.match(/^(.+) 已刪除。$/);
   if (removedHolding) return `${removedHolding[1]} deleted.`;
   const transactionRecorded = value.match(/^(買入|賣出|現金配息|股票配股|股票分割|減資)紀錄已新增。$/);
@@ -422,12 +431,15 @@ export function translateText(value, language = "zh-TW") {
   if (dateTitle) return `Last updated: ${dateTitle[1]}`;
   const quoteFailure = value.match(/^(.+) 可手動輸入價格。$/);
   if (quoteFailure) return `${translateText(quoteFailure[1], language)} Enter the price manually.`;
-  const feePreview = value.match(/^依(台股|美股|加拿大股)手續費設定預估，可自行修改。$/);
-  if (feePreview) return `Estimated using ${feePreview[1] === "台股" ? "Taiwan" : feePreview[1] === "加拿大股" ? "Canadian" : "U.S."} stock fee settings. You can adjust it.`;
   const amount = value.match(/^(\d+) \/ (\d+) 檔報價更新成功，失敗項目請稍後重試。$/);
   if (amount) return `${amount[1]} of ${amount[2]} quotes updated. Please retry failed quotes later.`;
+  const accountAdded = value.match(/^已新增「(.+)」帳戶。$/);
+  if (accountAdded) return `Account "${accountAdded[1]}" added.`;
+  const accountDeleted = value.match(/^已刪除「(.+)」帳戶。$/);
+  if (accountDeleted) return `Account "${accountDeleted[1]}" deleted.`;
+  const confirmDeleteAccount = value.match(/^確定刪除「(.+)」帳戶？$/);
+  if (confirmDeleteAccount) return `Are you sure you want to delete account "${confirmDeleteAccount[1]}"?`;
 
-  // 排序提示無障礙無縫翻譯：依 [欄位] 排序 -> Sort by [Column]
   const sortBy = value.match(/^依 (.+) 排序$/);
   if (sortBy) return `Sort by ${translateText(sortBy[1], language)}`;
 
