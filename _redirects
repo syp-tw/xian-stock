@@ -1,0 +1,3 @@
+/quote-api/yahoo/* https://query1.finance.yahoo.com/:splat 200
+/quote-api/twse/* https://openapi.twse.com.tw/:splat 200
+/quote-api/tpex/* https://www.tpex.org.tw/:splat 200
