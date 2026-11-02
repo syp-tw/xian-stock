@@ -192,14 +192,53 @@ h1, h2, h3, p { margin-top: 0; }
 .refresh-button.loading { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .table-scroll { overflow-x: auto; }
-table { width: 100%; min-width: 1090px; border-collapse: collapse; }
+
+/* 🌟 表格寬度大幅縮小優化：從 1090px 瘦身至 640px，極大節省橫向滾動空間 */
+table { width: 100%; min-width: 640px; border-collapse: collapse; }
 thead { background: #fafbfa; }
-th { padding: 12px 11px; color: #8a9690; font-size: 10px; font-weight: 500; text-align: right; white-space: nowrap; }
+th { padding: 11px 10px; color: #8a9690; font-size: 11px; font-weight: 500; text-align: right; white-space: nowrap; }
 th:first-child { padding-left: 18px; text-align: left; }
 th:last-child { padding-right: 16px; }
-td { padding: 13px 11px; border-top: 1px solid #f0f2f1; color: #536159; font-size: 11px; text-align: right; white-space: nowrap; }
+td { padding: 11px 10px; border-top: 1px solid #f0f2f1; color: #536159; font-size: 11px; text-align: right; white-space: nowrap; }
 td:first-child { padding-left: 18px; text-align: left; }
 td:last-child { padding-right: 14px; }
+
+/* 🌟 上下雙層整併型表頭與儲存格樣式 */
+.th-compound-wrap {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.25;
+}
+.th-compound-wrap > span {
+  font-size: 10px;
+  font-weight: 600;
+  color: #607267;
+}
+.th-compound-wrap > small {
+  font-size: 9px;
+  color: #9aa59f;
+  font-weight: 400;
+  margin-top: 1px;
+}
+
+.compound-cell {
+  vertical-align: middle;
+  text-align: right;
+}
+.compound-top {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.compound-bottom {
+  font-size: 10px;
+  line-height: 1.35;
+  margin-top: 2px;
+}
+.compound-bottom.muted {
+  color: #88968e;
+}
 
 /* 庫存表頭排序交互樣式 */
 .sortable-header { cursor: pointer; user-select: none; transition: background-color .15s, color .15s; }
@@ -403,9 +442,11 @@ td:last-child { padding-right: 14px; }
   .table-tabs { height: 43px; gap: 14px; }
   .table-tab { font-size: 10px; }
   .refresh-button { width: 25px; height: 25px; }
-  table { min-width: 1060px; }
-  th { padding-top: 11px; padding-bottom: 11px; font-size: 9px; }
-  td { padding-top: 11px; padding-bottom: 11px; }
+  
+  /* 🌟 手機端微調：縮小至 600px，輕微滾動即可看清全部雙層指標 */
+  table { min-width: 600px; }
+  th { padding-top: 10px; padding-bottom: 10px; font-size: 9px; }
+  td { padding-top: 10px; padding-bottom: 10px; }
   .table-footer { align-items: flex-start; gap: 8px; padding: 10px 11px; font-size: 8px; line-height: 1.5; }
   .table-footer span:last-child { max-width: 205px; text-align: right; }
   .page-footer { gap: 10px; margin-top: 19px; font-size: 8px; }

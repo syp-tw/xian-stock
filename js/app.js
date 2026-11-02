@@ -1,4 +1,4 @@
-// js/app.js - 前端主控調度模組（整合多格式匯入匯出、Google 試算表全平台同步、美股 WebSocket 串流與多帳戶管理）
+// js/app.js - 前端主控調度模組（整合雙層整併欄位渲染、自訂欄位順序修復、多格式匯入匯出、Google 試算表全平台同步與美股串流）
 import { getHoldingMetrics, getPortfolioMetrics } from "./calculations.js";
 import { 
   parseBackup, serializeBackup, serializeJsBackup, 
@@ -24,10 +24,11 @@ import { MarketPoller } from "./market-poller.js";
 let storageMode = loadStorageMode();
 const state = loadState(storageMode);
 
-// 1. 自動補齊舊版 LocalStorage 缺少的新官方欄位
-if (Array.isArray(state.settings.columnOrder) && !state.settings.columnOrder.includes("dividends")) {
-  const defIdx = DEFAULT_SETTINGS.columnOrder.indexOf("dividends");
-  state.settings.columnOrder.splice(defIdx >= 0 ? defIdx : state.settings.columnOrder.length - 1, 0, "dividends");
+// 1. 自動升級舊版 columnOrder 為全新雙層整併欄位（目前現價/均價、損益/報酬率、市值/本金）
+const legacyCols = ["currentPrice", "averageCost", "profit", "returnRate", "marketValue", "cost"];
+if (Array.isArray(state.settings.columnOrder) && state.settings.columnOrder.some((c) => legacyCols.includes(c))) {
+  state.settings.columnOrder = [...DEFAULT_SETTINGS.columnOrder];
+  state.settings.hiddenColumns = [...DEFAULT_SETTINGS.hiddenColumns];
   saveState(state, storageMode);
 }
 
@@ -220,7 +221,7 @@ const marketPoller = new MarketPoller({
   toast,
 });
 
-// ----------------- 儲存模式切換（支援本機、PC共用檔與 Google 試算表） -----------------
+// ----------------- 儲存模式切換 -----------------
 async function switchStorageMode(nextMode) {
   if (nextMode === storageMode) return;
   const previousMode = storageMode;
@@ -319,7 +320,7 @@ function handleSort(key) {
 }
 
 function getSortedHoldings(holdings) {
-  const key = state.settings.sortKey || "marketValue";
+  const key = state.settings.sortKey || "marketValueCost";
   const dir = state.settings.sortDirection === "asc" ? 1 : -1;
 
   return [...holdings].sort((a, b) => {
@@ -335,15 +336,15 @@ function getSortedHoldings(holdings) {
       valA = a.buyDate || "";
       valB = b.buyDate || "";
       return String(valA).localeCompare(String(valB)) * dir;
+    } else if (key === "priceCost" || key === "currentPrice") {
+      valA = a.currentPrice;
+      valB = b.currentPrice;
     } else if (key === "averageCost") {
       valA = metricsA.averageCost;
       valB = metricsB.averageCost;
     } else if (key === "shares") {
       valA = a.shares;
       valB = b.shares;
-    } else if (key === "currentPrice") {
-      valA = a.currentPrice;
-      valB = b.currentPrice;
     } else if (key === "fees") {
       valA = a.fees;
       valB = b.fees;
@@ -353,18 +354,24 @@ function getSortedHoldings(holdings) {
     } else if (key === "cost") {
       valA = metricsA.cost;
       valB = metricsB.cost;
-    } else if (key === "marketValue") {
+    } else if (key === "marketValueCost" || key === "marketValue") {
       valA = metricsA.marketValue;
       valB = metricsB.marketValue;
-    } else if (key === "profit") {
+    } else if (key === "profitRate" || key === "profit") {
       valA = metricsA.profit;
       valB = metricsB.profit;
     } else if (key === "returnRate") {
       valA = metricsA.returnRate;
       valB = metricsB.returnRate;
     } else {
-      valA = a.custom?.[key] || "";
-      valB = b.custom?.[key] || "";
+      // 自訂欄位排序（支援數值與字串自動判別）
+      valA = a.custom?.[key] ?? "";
+      valB = b.custom?.[key] ?? "";
+      const numA = Number(valA);
+      const numB = Number(valB);
+      if (valA !== "" && valB !== "" && Number.isFinite(numA) && Number.isFinite(numB)) {
+        return (numA - numB) * dir;
+      }
       return String(valA).localeCompare(String(valB)) * dir;
     }
 
@@ -392,6 +399,7 @@ function formatReturnRate(rate) {
   return `${rate >= 0 ? "+" : ""}${rate.toFixed(2)}%`;
 }
 
+// 🌟 表頭渲染（支援包含「 / 」的雙層表頭排版）
 function renderTableHeaders() {
   const headerRow = elements.headerRow;
   if (!headerRow) return;
@@ -403,9 +411,21 @@ function renderTableHeaders() {
     th.scope = "col";
     th.className = `sortable-header ${col.id === "actions" ? "action-header" : ""}`;
 
-    const textSpan = document.createElement("span");
-    textSpan.textContent = translateText(col.label, state.settings.language);
-    th.append(textSpan);
+    if (col.label.includes(" / ") && col.id !== "symbol") {
+      const [mainTitle, subTitle] = col.label.split(" / ");
+      const wrap = document.createElement("div");
+      wrap.className = "th-compound-wrap";
+      const mainSpan = document.createElement("span");
+      mainSpan.textContent = translateText(mainTitle, state.settings.language);
+      const subSpan = document.createElement("small");
+      subSpan.textContent = translateText(subTitle, state.settings.language);
+      wrap.append(mainSpan, subSpan);
+      th.append(wrap);
+    } else {
+      const textSpan = document.createElement("span");
+      textSpan.textContent = translateText(col.label, state.settings.language);
+      th.append(textSpan);
+    }
 
     if (col.id !== "actions") {
       th.tabIndex = 0;
@@ -447,6 +467,7 @@ function renderTableHeaders() {
   }
 }
 
+// 🌟 庫存列渲染（支援雙層整併式儲存格）
 function makeHoldingRow(holding, activeColumns) {
   const row = document.createElement("tr");
   row.className = "holding-row";
@@ -501,6 +522,40 @@ function makeHoldingRow(holding, activeColumns) {
       nameWrap.append(avatar, copy);
       nameCell.append(nameWrap);
       row.append(nameCell);
+    } else if (col.id === "priceCost") {
+      const cell = document.createElement("td");
+      cell.className = "compound-cell";
+      const top = document.createElement("div");
+      top.className = "compound-top";
+      top.textContent = formatMoney(holding.currentPrice, holding.market, 2, state.settings.language);
+      const bottom = document.createElement("div");
+      bottom.className = "compound-bottom muted";
+      bottom.textContent = formatMoney(metrics.averageCost, holding.market, 2, state.settings.language);
+      cell.append(top, bottom);
+      row.append(cell);
+    } else if (col.id === "profitRate") {
+      const cell = document.createElement("td");
+      cell.className = "compound-cell";
+      const profitClass = metrics.profit > 0 ? "gain" : metrics.profit < 0 ? "loss" : "muted-value";
+      const top = document.createElement("div");
+      top.className = `compound-top ${profitClass}`;
+      top.textContent = formatMoney(metrics.profit, holding.market, 2, state.settings.language);
+      const bottom = document.createElement("div");
+      bottom.className = `compound-bottom ${profitClass}`;
+      bottom.textContent = formatReturnRate(metrics.returnRate);
+      cell.append(top, bottom);
+      row.append(cell);
+    } else if (col.id === "marketValueCost") {
+      const cell = document.createElement("td");
+      cell.className = "compound-cell";
+      const top = document.createElement("div");
+      top.className = "compound-top";
+      top.textContent = formatMoney(metrics.marketValue, holding.market, 2, state.settings.language);
+      const bottom = document.createElement("div");
+      bottom.className = "compound-bottom muted";
+      bottom.textContent = formatMoney(metrics.cost, holding.market, 2, state.settings.language);
+      cell.append(top, bottom);
+      row.append(cell);
     } else if (col.id === "currentPrice") {
       row.append(textCell(formatMoney(holding.currentPrice, holding.market, 2, state.settings.language)));
     } else if (col.id === "averageCost") {
@@ -677,7 +732,7 @@ function render() {
   applyTranslations(state.settings.language);
 }
 
-// ----------------- 自訂欄位彈窗 -----------------
+// ----------------- 自訂欄位順序彈窗（🌟 修復 combined 未定義之關鍵錯誤） -----------------
 function openColumnManager() {
   const dialog = document.querySelector("#column-manager-dialog");
   if (!dialog) return;
@@ -702,7 +757,8 @@ function openColumnManager() {
     for (const baseCol of BASE_COLUMNS) {
       if (!orderedCols.some((c) => c.id === baseCol.id)) {
         const defIdx = DEFAULT_SETTINGS.columnOrder.indexOf(baseCol.id);
-        const insertAt = defIdx >= 0 && defIdx < combined.length ? defIdx : combined.length - 1;
+        // 🌟 正確使用 orderedCols.length，徹底消滅 ReferenceError
+        const insertAt = defIdx >= 0 && defIdx < orderedCols.length ? defIdx : Math.max(0, orderedCols.length - 1);
         orderedCols.splice(insertAt, 0, baseCol);
       }
     }
@@ -719,7 +775,7 @@ function openColumnManager() {
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.checked = !hiddenSet.has(col.id);
-      checkbox.disabled = col.locked;
+      checkbox.disabled = Boolean(col.locked);
       checkbox.addEventListener("change", () => {
         if (checkbox.checked) state.settings.hiddenColumns = state.settings.hiddenColumns.filter((id) => id !== col.id);
         else if (!state.settings.hiddenColumns.includes(col.id)) state.settings.hiddenColumns.push(col.id);
@@ -728,16 +784,18 @@ function openColumnManager() {
       });
 
       const label = document.createElement("span");
-      label.textContent = col.label;
+      label.textContent = translateText(col.label, state.settings.language);
       left.append(checkbox, label);
 
       const actions = document.createElement("div");
       actions.className = "column-item-actions";
 
+      // 上移按鈕（↑）
       const upBtn = document.createElement("button");
       upBtn.type = "button";
       upBtn.className = "move-btn";
       upBtn.textContent = "↑";
+      upBtn.title = translateText("上移", state.settings.language);
       upBtn.disabled = index === 0 || col.locked || orderedCols[index - 1]?.locked;
       upBtn.addEventListener("click", () => {
         const temp = orderedCols[index - 1];
@@ -749,10 +807,12 @@ function openColumnManager() {
         render();
       });
 
+      // 下移按鈕（↓）
       const downBtn = document.createElement("button");
       downBtn.type = "button";
       downBtn.className = "move-btn";
       downBtn.textContent = "↓";
+      downBtn.title = translateText("下移", state.settings.language);
       downBtn.disabled = index === orderedCols.length - 1 || col.locked || orderedCols[index + 1]?.locked;
       downBtn.addEventListener("click", () => {
         const temp = orderedCols[index + 1];

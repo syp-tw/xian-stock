@@ -1,4 +1,4 @@
-// js/storage.js - 本地儲存、雲端快取與狀態持久化模組
+// js/storage.js - 本地儲存、雲端快取、預設雙層整併欄位定義與狀態持久化模組
 
 const STORAGE_KEY = "he-xu-stock-ledger-v1";
 const CLOUD_CACHE_KEY = `${STORAGE_KEY}-cloud-cache`;
@@ -10,17 +10,14 @@ export const DEFAULT_ACCOUNTS = [
   { id: DEFAULT_ACCOUNT_ID, name: "主要帳戶", color: "#418874" }
 ];
 
+// 🌟 雙層整併欄位定義：預設將 6 個欄位兩兩合併，省下一半以上的水平空間
 export const BASE_COLUMNS = [
   { id: "symbol", label: "股票代號+名稱 / 股數", locked: true },
-  { id: "currentPrice", label: "目前現價" },
-  { id: "averageCost", label: "平均買入價" },
-  { id: "profit", label: "帳面損益" },
-  { id: "returnRate", label: "報酬率" },
-  { id: "marketValue", label: "目前市值" },
-  { id: "cost", label: "投資本金" },
+  { id: "priceCost", label: "目前現價 / 平均買入價" },
+  { id: "profitRate", label: "帳面損益 / 報酬率" },
+  { id: "marketValueCost", label: "目前市值 / 投資本金" },
+  { id: "dividends", label: "累計股息" },
   { id: "fees", label: "手續費" },
-  { id: "dividends", label: "股息" },
-  { id: "shares", label: "目前股數" },
   { id: "buyDate", label: "買入日期" },
   { id: "actions", label: "操作", locked: true },
 ];
@@ -40,29 +37,25 @@ export const DEFAULT_SETTINGS = {
   quoteProvider: "render-api",
   quoteApiUrl: "https://my-stock-api-nhaj.onrender.com/api/realtime?tw_codes=2330&us_symbols=AAPL",
   finnhubToken: "",
+  googleSheetWebhook: "",
   usStreamMode: "standard",
-  sortKey: "marketValue",
+  sortKey: "marketValueCost",
   sortDirection: "desc",
   columnOrder: [
     "symbol",
-    "currentPrice",
-    "averageCost",
-    "profit",
-    "returnRate",
-    "marketValue",
-    "cost",
-    "fees",
+    "priceCost",
+    "profitRate",
+    "marketValueCost",
     "dividends",
-    "shares",
-    "buyDate",
     "actions",
   ],
-  hiddenColumns: ["buyDate", "shares"],
+  hiddenColumns: [],
 };
 
 export function loadStorageMode() {
   try {
-    return localStorage.getItem(STORAGE_MODE_KEY) === "cloud" ? "cloud" : "local";
+    const mode = localStorage.getItem(STORAGE_MODE_KEY);
+    return ["cloud", "google-sheet"].includes(mode) ? mode : "local";
   } catch (error) {
     console.error("無法讀取儲存位置設定：", error);
     return "local";
@@ -71,7 +64,7 @@ export function loadStorageMode() {
 
 export function saveStorageMode(mode) {
   try {
-    localStorage.setItem(STORAGE_MODE_KEY, mode === "cloud" ? "cloud" : "local");
+    localStorage.setItem(STORAGE_MODE_KEY, ["cloud", "google-sheet"].includes(mode) ? mode : "local");
     return true;
   } catch (error) {
     console.error("無法儲存儲存位置設定：", error);
@@ -204,6 +197,7 @@ export function normalizeImportedState(parsed) {
   settings.quoteProvider = settings.quoteProvider === "yahoo" ? "yahoo" : "render-api";
   settings.quoteApiUrl = typeof settings.quoteApiUrl === "string" ? settings.quoteApiUrl : DEFAULT_SETTINGS.quoteApiUrl;
   settings.finnhubToken = typeof settings.finnhubToken === "string" ? settings.finnhubToken : DEFAULT_SETTINGS.finnhubToken;
+  settings.googleSheetWebhook = typeof settings.googleSheetWebhook === "string" ? settings.googleSheetWebhook : DEFAULT_SETTINGS.googleSheetWebhook;
   settings.usStreamMode = settings.usStreamMode === "geek" ? "geek" : "standard";
   settings.sortKey = typeof settings.sortKey === "string" ? settings.sortKey : DEFAULT_SETTINGS.sortKey;
   settings.sortDirection = settings.sortDirection === "asc" ? "asc" : "desc";
@@ -264,6 +258,7 @@ export function loadState(mode = "local") {
         quoteProvider: parsed.settings?.quoteProvider === "yahoo" ? "yahoo" : "render-api",
         quoteApiUrl: typeof parsed.settings?.quoteApiUrl === "string" ? parsed.settings.quoteApiUrl : DEFAULT_SETTINGS.quoteApiUrl,
         finnhubToken: typeof parsed.settings?.finnhubToken === "string" ? parsed.settings.finnhubToken : DEFAULT_SETTINGS.finnhubToken,
+        googleSheetWebhook: typeof parsed.settings?.googleSheetWebhook === "string" ? parsed.settings.googleSheetWebhook : DEFAULT_SETTINGS.googleSheetWebhook,
         usStreamMode: parsed.settings?.usStreamMode === "geek" ? "geek" : "standard",
         sortKey: parsed.settings?.sortKey || DEFAULT_SETTINGS.sortKey,
         sortDirection: parsed.settings?.sortDirection || DEFAULT_SETTINGS.sortDirection,

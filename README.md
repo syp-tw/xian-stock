@@ -117,6 +117,55 @@ python -m http.server 8080
 
 Google 試算表會保存完整投資備份於隱藏資料分頁，並更新可讀的庫存總覽分頁。同步是整份資料快照，不是多人即時協作；多裝置同時修改可能造成版本互相覆蓋。
 
+## 技術交接與維護
+
+### 模組職責
+
+| 模組 | 職責 | 維護重點 |
+|---|---|---|
+| `js/app.js` | 應用程式初始化、畫面、狀態保存與替換、事件協調 | 狀態修改應透過共用的 `persist`／`replaceState` 流程，讓目前儲存模式及串流訂閱同步更新。 |
+| `js/ui-accounts.js` | 帳戶選單與新增、改名、刪除 | 改名會去除頭尾空白並拒絕空白或重複名稱；有持倉或交易紀錄的帳戶不可直接刪除。 |
+| `js/market-poller.js` | 台股輪詢、持倉批次刷新、頁面喚醒處理 | 台股持倉每 10 秒輪詢；回到前景會喚醒美股串流並補刷台股。啟動時會對報價 API 主機送出背景預熱請求。 |
+| `js/us-stream.js` | Finnhub WebSocket 連線、訂閱、節流與重連 | 標準模式限美東平日常規交易時段，約 5 秒批次更新；Geek 模式即時處理收到的成交資料。斷線採逐步增加、最高 30 秒的重連延遲。 |
+| `js/google-sheet-sync.js` | Google Apps Script Web App 同步 | 編輯停止約 3 秒後推送完整備份；亦支援手動 Push／Pull。 |
+| `js/backup.js` | JSON、JS、CSV 與 Excel 匯入匯出 | CSV 有內建引號解析；Excel 讀寫依賴 `index.html` 載入的 SheetJS。 |
+| `js/calculations.js` | 持倉與總覽指標、手續費估算 | 日損益只累加有資料的持倉；總報酬率以總損益除以總成本計算。 |
+| `js/storage.js` | 預設值、資料正規化及瀏覽器持久化 | 維護多帳戶匯入相容、期初餘額及雙層欄位設定。 |
+| `js/ledger.js` | 交易回放及持倉成本更新 | 帳本識別鍵為 `${accountId}:${market}:${symbol}`；修改交易型態時需維持回放一致性。 |
+| `js/quotes.js` | 股票搜尋與行情查詢 | Render 相容 API、Yahoo Finance、TWSE／TPEx 清單的請求路徑集中於此。 |
+| `js/cloud-sync.js`、`js/shared-file.js` | 共用 JSON 檔案、IndexedDB Handle 與衝突保護 | 寫入前檢查檔案指紋，偵測外部修改時需先處理衝突。 |
+
+`backend/main.py`、`requirements.txt` 及 Fugle API 金鑰輪替服務**不在目前儲存庫中**。如有獨立的 Render 後端部署，請在該後端儲存庫維護程式與設定，勿假設修改本前端即可改變後端快取或供應商行為。
+
+### 關鍵計算與狀態維護
+
+- **日損益**：單一持倉優先使用 `dailyChangePerShare`；若沒有，且有有效的 `previousClose`，以現價減昨收計算。總覽只加總有日損益資料的持倉，不會因其他標的缺資料而清空已知小計；全部持倉都沒有資料時才顯示無資料。美股串流只推送成交價，因此報價更新時須保留 `previousClose`，並以新現價重新計算每股日漲跌。
+- **報酬率**：總覽以換算後的總損益除以總成本計算，不是個股報酬率的簡單平均。驗證時應涵蓋不同市場匯率、成本為零及部分持倉缺乏昨收資料等情況。
+- **雙層欄位**：目前 `BASE_COLUMNS` 使用 `priceCost`、`profitRate`、`marketValueCost` 等合併欄位 ID。表頭標題含「 / 」時呈現上下兩層。舊版使用個別價格、損益欄位 ID 的排序設定會由 `app.js` 重設為新版預設欄位；修改欄位 ID 時須同步檢查排序取值、隱藏欄位及自訂欄位管理。
+- **帳戶及持倉刪除**：帳戶改名需保留不區分大小寫的重複名稱檢查；帳戶刪除需先確認沒有持倉與交易。刪除持倉時需同時移除相同帳戶／市場／代號的交易及對應 `openingBalances`，避免孤立帳務資料。
+- **美股串流授權**：連線優先呼叫報價 API 主機的 `/api/us-ws-url` 取得 WebSocket 網址；交握失敗且瀏覽器設定有 Finnhub Token 時才改用 Token 直連。Token 若填在前端設定，會保存在瀏覽器資料並可能進入 JSON／Excel 完整備份。正式部署宜在受控後端管理 Token。
+- **Google 試算表同步**：同步的是完整狀態快照，並非逐筆交易合併。多人或多裝置同時編輯有覆寫風險。程式以 `no-cors` 發出 POST，瀏覽器無法讀取 Apps Script 的實際回應；前端顯示的推送成功訊息不等同於伺服器已確認寫入，重要資料應再從試算表載入驗證。
+
+### 設定與部署檢查
+
+| 設定 | 用途 | 注意事項 |
+|---|---|---|
+| `quoteApiUrl` | Render 相容 HTTPS 行情 API | 前端會以該主機取得美股串流交握網址；API 應回傳前端預期的行情結構。 |
+| `quoteProvider` | `render-api` 或 `yahoo` | 加拿大股會使用 Yahoo Finance；Netlify 代理僅由 `_redirects` 提供。 |
+| `googleSheetWebhook` | 個人 Apps Script `/exec` 網址 | 此儲存庫內建腳本不含使用者驗證；任何人可存取的部署應保護網址，勿公開分享。 |
+| `finnhubToken` | Finnhub Token 備援 | 優先使用後端交握；前端 Token 會保存在本機資料中。 |
+| `usStreamMode` | `standard` 或 `geek` | 僅控制前端對收到成交資料的時段篩選與更新節奏，不保證供應商提供 24 小時成交資料。 |
+
+若自建**不包含於本儲存庫**的後端，可自行管理 `ALLOWED_ORIGINS`、`FINNHUB_TOKEN` 等環境變數；只有在後端實際使用 Fugle 時，才需要 `FUGLE_API_KEY_1` 等供應商金鑰。請勿把金鑰提交至前端或 Git。後端供應商、金鑰輪替、CORS 與快取 TTL 應以其實際程式碼為準。
+
+### 常見問題排查
+
+- **Apps Script 回傳 401／302，或載入失敗**：確認 Web App 已部署為最新版本、網址以 `/exec` 結尾，且存取權限符合使用方式。此專案的測試連線會發出 GET，請確認 Apps Script `doGet` 可正常讀取資料或回傳空資料狀態。若部署允許任何人存取，網址即具備資料存取風險。
+- **Google 試算表推送提示成功但資料未更新**：由於 POST 使用 `no-cors`，前端無法讀取伺服器回應；檢查 Apps Script 執行記錄與試算表內容，必要時從試算表重新載入驗證。
+- **Render 首次報價較慢**：前端啟動時會對報價 API 主機送出背景預熱請求，但這不保證外部服務已完成冷啟動。確認 API 可用性與瀏覽器網路請求後再判斷是否為資料或前端問題。
+- **美股交易時段判斷**：程式以 `America/New_York` 時區及瀏覽器 `Intl.DateTimeFormat` 判定美東平日 09:30 至 16:00，不應改成固定台灣時間或固定 UTC 偏移；夏令時間由時區資料自動處理。
+- **Excel 無法匯入／匯出**：確認網路可載入 SheetJS CDN。Excel 功能不可用時，仍可使用 JSON／CSV；無損完整還原請保留 JSON 備份。
+
 ## 隱私權與資料安全
 
 **最後更新：2026-11-03**
