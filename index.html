@@ -44,6 +44,11 @@
             </div>
           </div>
           <div class="topbar-actions">
+            <!-- 美股即時狀態指示燈與頻率模式切換 -->
+            <div class="stream-control-wrap">
+              <span class="stream-indicator" id="us-stream-status" title="美股串流狀態"></span>
+              <button type="button" class="stream-mode-btn active-standard" id="us-stream-mode-toggle" title="切換美股頻率模式">⏱️ 標準模式</button>
+            </div>
             <span class="market-status"><span class="status-dot"></span>市場報價可查詢</span>
             <button class="icon-button settings-shortcut" id="open-settings-top" aria-label="偏好設定">⚙</button>
             <div class="avatar" aria-label="個人帳戶">H</div>
@@ -421,7 +426,7 @@
           </div>
         </section>
 
-        <!-- 即時報價 API -->
+        <!-- 即時報價 API 與美股 WebSocket 設定 -->
         <section class="settings-group" aria-labelledby="quote-provider-heading">
           <h3 id="quote-provider-heading">即時報價 API</h3>
           <div class="form-field">
@@ -434,6 +439,11 @@
           <div class="form-field">
             <label for="quote-api-url">Render 報價 API 網址</label>
             <input id="quote-api-url" name="quoteApiUrl" type="url" autocomplete="url" required />
+          </div>
+          <div class="form-field">
+            <label for="finnhub-token">Finnhub API Token（選填／由後端 FINNHUB_TOKEN 自動授權）</label>
+            <input id="finnhub-token" name="finnhubToken" type="password" autocomplete="off" placeholder="留白即可：系統將自動透過後端安全交握" />
+            <small class="field-help">後端配置 <code>FINNHUB_TOKEN</code> 環境變數後，系統透過 <code>/api/us-ws-url</code> 端點安全交握獲取連線權限，無須在前端輸入或洩漏 Token。</small>
           </div>
           <p class="field-help">
             Yahoo Finance 支援台股、美股與加拿大股完整查價及中英文名稱搜尋。Render API 為專屬自建服務；若在 Render 模式下查詢加拿大股，系統會智慧自動切換至 Yahoo 查詢，無須手動切換設定。

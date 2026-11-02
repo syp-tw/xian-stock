@@ -39,6 +39,8 @@ export const DEFAULT_SETTINGS = {
   overviewCurrency: "TWD",
   quoteProvider: "render-api",
   quoteApiUrl: "https://my-stock-api-nhaj.onrender.com/api/realtime?tw_codes=2330&us_symbols=AAPL",
+  finnhubToken: "",
+  usStreamMode: "standard",
   sortKey: "marketValue",
   sortDirection: "desc",
   columnOrder: [
@@ -136,7 +138,6 @@ export function normalizeImportedState(parsed) {
     throw new Error("期初庫存資料格式不正確。");
   }
 
-  // 1. 帳戶結構向下相容遷移
   let accounts = DEFAULT_ACCOUNTS;
   if (Array.isArray(parsed.accounts) && parsed.accounts.length > 0) {
     accounts = parsed.accounts.map((acc) => ({
@@ -148,7 +149,6 @@ export function normalizeImportedState(parsed) {
 
   const validAccountIds = new Set(accounts.map((a) => a.id));
 
-  // 2. 持倉資料標準化與帳戶歸戶
   const holdings = parsed.holdings.map((item) => {
     if (!isObject(item) || !String(item.symbol || "").trim()) {
       throw new Error("備份中有無效的庫存資料。");
@@ -169,7 +169,6 @@ export function normalizeImportedState(parsed) {
     return normalized;
   }).filter((item) => item && item.shares > 0);
 
-  // 3. 自訂欄位
   const customFields = (parsed.customFields || []).map((field) => {
     if (!isObject(field) || !String(field.id || "").trim() || !String(field.name || "").trim()) {
       throw new Error("備份中有無效的自訂欄位。");
@@ -177,7 +176,6 @@ export function normalizeImportedState(parsed) {
     return { id: String(field.id), name: String(field.name) };
   });
 
-  // 4. 交易紀錄標準化與帳戶歸戶
   const transactions = parsed.transactions.map((transaction) => {
     if (!isObject(transaction)) throw new Error("備份中有無效的交易資料。");
     const accId = String(transaction.accountId || DEFAULT_ACCOUNT_ID);
@@ -187,7 +185,6 @@ export function normalizeImportedState(parsed) {
     };
   });
 
-  // 5. 偏好設定
   const settings = { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) };
   for (const key of ["twRate", "twDiscount", "twMinimum", "usPerShare", "usMinimum", "fxRate", "caPerShare", "caMinimum", "cadFxRate"]) {
     if (!Number.isFinite(Number(settings[key])) || Number(settings[key]) < 0) {
@@ -203,6 +200,8 @@ export function normalizeImportedState(parsed) {
   settings.overviewCurrency = settings.overviewCurrency === "USD" ? "USD" : "TWD";
   settings.quoteProvider = settings.quoteProvider === "yahoo" ? "yahoo" : "render-api";
   settings.quoteApiUrl = typeof settings.quoteApiUrl === "string" ? settings.quoteApiUrl : DEFAULT_SETTINGS.quoteApiUrl;
+  settings.finnhubToken = typeof settings.finnhubToken === "string" ? settings.finnhubToken : DEFAULT_SETTINGS.finnhubToken;
+  settings.usStreamMode = settings.usStreamMode === "geek" ? "geek" : "standard";
   settings.sortKey = typeof settings.sortKey === "string" ? settings.sortKey : DEFAULT_SETTINGS.sortKey;
   settings.sortDirection = settings.sortDirection === "asc" ? "asc" : "desc";
   settings.columnOrder = Array.isArray(settings.columnOrder) ? settings.columnOrder : DEFAULT_SETTINGS.columnOrder;
@@ -261,6 +260,8 @@ export function loadState(mode = "local") {
         overviewCurrency: parsed.settings?.overviewCurrency === "USD" ? "USD" : "TWD",
         quoteProvider: parsed.settings?.quoteProvider === "yahoo" ? "yahoo" : "render-api",
         quoteApiUrl: typeof parsed.settings?.quoteApiUrl === "string" ? parsed.settings.quoteApiUrl : DEFAULT_SETTINGS.quoteApiUrl,
+        finnhubToken: typeof parsed.settings?.finnhubToken === "string" ? parsed.settings.finnhubToken : DEFAULT_SETTINGS.finnhubToken,
+        usStreamMode: parsed.settings?.usStreamMode === "geek" ? "geek" : "standard",
         sortKey: parsed.settings?.sortKey || DEFAULT_SETTINGS.sortKey,
         sortDirection: parsed.settings?.sortDirection || DEFAULT_SETTINGS.sortDirection,
         columnOrder: Array.isArray(parsed.settings?.columnOrder) ? parsed.settings.columnOrder : DEFAULT_SETTINGS.columnOrder,
@@ -279,7 +280,7 @@ export function loadState(mode = "local") {
       settings: { ...DEFAULT_SETTINGS },
       transactions: [],
       openingBalances: {},
-      storageError: true
+      storageError: true,
     };
   }
 }

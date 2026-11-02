@@ -1,4 +1,4 @@
-// js/app.js - 主入口模組（整合多帳戶系統、UI 表格、投資總覽、雲端同步與自訂欄位排序）
+// js/app.js - 主入口模組（整合多帳戶系統、UI 表格、投資總覽、雲端同步、美股 WebSocket 串流安全交握與台股自動輪詢）
 import { getHoldingMetrics, getPortfolioMetrics } from "./calculations.js";
 import { parseBackup, serializeBackup, serializeCsv } from "./backup.js";
 import { applyTranslations, formatMoney, formatQuantity, formatTwd, locale, translateText } from "./i18n.js";
@@ -13,18 +13,19 @@ import {
 } from "./ledger.js";
 import { CloudSyncManager } from "./cloud-sync.js";
 import { TransactionDialog } from "./dialog-transaction.js";
+import { UsStockStreamManager } from "./us-stream.js";
 
 let storageMode = loadStorageMode();
 const state = loadState(storageMode);
 
-// 1. 自動補齊舊版 LocalStorage 缺少的新官方欄位（例如 dividends）
+// 1. 自動補齊舊版 LocalStorage 缺少的新官方欄位
 if (Array.isArray(state.settings.columnOrder) && !state.settings.columnOrder.includes("dividends")) {
   const defIdx = DEFAULT_SETTINGS.columnOrder.indexOf("dividends");
   state.settings.columnOrder.splice(defIdx >= 0 ? defIdx : state.settings.columnOrder.length - 1, 0, "dividends");
   saveState(state, storageMode);
 }
 
-// 2. 核心清洗：徹底清除「未買過、持股為 0 或已出清」的殘留庫存標的
+// 2. 核心清洗：徹底清除持股為 0 的殘留標的
 const beforePurgeCount = state.holdings.length;
 state.holdings = state.holdings.filter((h) => Number(h.shares) > 0);
 if (state.holdings.length !== beforePurgeCount) {
@@ -85,6 +86,7 @@ function replaceState(nextState, { syncCloud = true } = {}) {
   if (storageMode === "cloud" && syncCloud) cloudSync.scheduleSave(storageMode);
   const langSetting = document.querySelector("#language-setting");
   if (langSetting) langSetting.value = state.settings.language;
+  syncUsStreamSubscriptions();
   render();
 }
 
@@ -110,6 +112,7 @@ const txDialog = new TransactionDialog({
   getState: () => state,
   onTransactionSaved: (activeHolding) => {
     state.holdings = state.holdings.filter((h) => Number(h.shares) > 0);
+    syncUsStreamSubscriptions();
     persist();
     render();
     if (activeHolding && activeHolding.shares > 0) openHoldingDetails(activeHolding);
@@ -118,6 +121,140 @@ const txDialog = new TransactionDialog({
   toast,
 });
 
+// ============================================================================
+// 後端安全交握：動態取得 WebSocket 網址，不在前端儲存任何 Token
+// ============================================================================
+function getBackendBaseUrl() {
+  try {
+    const url = new URL(state.settings.quoteApiUrl || "https://my-stock-api-nhaj.onrender.com/api/realtime");
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return "https://my-stock-api-nhaj.onrender.com";
+  }
+}
+
+async function fetchUsWsUrl() {
+  const baseUrl = getBackendBaseUrl();
+  const res = await fetch(`${baseUrl}/api/us-ws-url`);
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => ({}));
+    throw new Error(errorBody.detail || "後端交握失敗，未能取得美股串流授權");
+  }
+  const data = await res.json();
+  return data.ws_url;
+}
+
+// 實例化美股串流管理器（傳入交握函式 fetchUsWsUrl）
+const usStream = new UsStockStreamManager({
+  getWsUrl: fetchUsWsUrl,
+  token: state.settings.finnhubToken || "",
+  mode: state.settings.usStreamMode || "standard",
+  onPriceUpdate: ({ symbol, price, timestamp, volume, mode }) => {
+    let hasUpdated = false;
+    for (const holding of state.holdings) {
+      if (holding.market === "US" && holding.symbol.toUpperCase() === symbol.toUpperCase()) {
+        holding.currentPrice = price;
+        holding.updatedAt = new Date(timestamp).toISOString();
+        hasUpdated = true;
+      }
+    }
+    if (hasUpdated) {
+      persist();
+      render();
+    }
+  },
+  onStatusChange: (status) => {
+    updateStreamStatusUI(status);
+  },
+});
+
+function syncUsStreamSubscriptions() {
+  const activeUsSymbols = state.holdings
+    .filter((h) => h.market === "US" && Number(h.shares) > 0)
+    .map((h) => h.symbol);
+  usStream.setSymbols(activeUsSymbols);
+}
+
+function updateStreamStatusUI(status) {
+  const statusElem = document.querySelector("#us-stream-status");
+  if (!statusElem) return;
+  statusElem.className = `stream-indicator ${status}`;
+  const labelMap = {
+    connected: "美股即時串流中",
+    connecting: "美股串流連線中…",
+    disconnected: "美股串流已斷線",
+    missing_token: "後端未設定 FINNHUB_TOKEN",
+    error: "美股串流異常",
+  };
+  statusElem.title = labelMap[status] || status;
+}
+
+function updateStreamModeButtonUI(mode) {
+  const btn = document.querySelector("#us-stream-mode-toggle");
+  if (!btn) return;
+  const isGeek = mode === "geek";
+  btn.textContent = isGeek ? "⚡ Geek 模式" : "⏱️ 標準模式";
+  btn.className = `stream-mode-btn ${isGeek ? "active-geek" : "active-standard"}`;
+}
+
+// ============================================================================
+// 台股背景自動輪詢（10 秒週期）
+// ============================================================================
+let twPollTimer = null;
+
+async function pollTaiwanStocks() {
+  const activeTwHoldings = state.holdings.filter((h) => h.market === "TW" && Number(h.shares) > 0);
+  if (!activeTwHoldings.length) return;
+
+  const codes = [...new Set(activeTwHoldings.map((h) => h.symbol.replace(/\.(TW|TWO)$/i, "")))].join(",");
+  if (!codes) return;
+
+  try {
+    const rawApiUrl = state.settings.quoteApiUrl || "https://my-stock-api-nhaj.onrender.com/api/realtime";
+    const parsedUrl = new URL(rawApiUrl);
+    parsedUrl.searchParams.set("tw_codes", codes);
+    parsedUrl.searchParams.delete("us_symbols");
+
+    const response = await fetch(parsedUrl.toString());
+    if (!response.ok) return;
+
+    const data = await response.json();
+    const twData = data.tw || {};
+    let hasChanged = false;
+
+    for (const holding of activeTwHoldings) {
+      const code = holding.symbol.replace(/\.(TW|TWO)$/i, "");
+      const quote = twData[code];
+      if (quote && Number(quote.price) > 0) {
+        holding.currentPrice = Number(quote.price);
+        if (quote.name && (!holding.name || holding.name === holding.symbol)) {
+          holding.name = quote.name;
+        }
+        if (quote.d !== undefined) {
+          holding.dailyChangePerShare = Number(quote.d);
+        }
+        holding.updatedAt = new Date().toISOString();
+        hasChanged = true;
+      }
+    }
+
+    if (hasChanged) {
+      persist();
+      render();
+    }
+  } catch (err) {
+    console.error("台股背景輪詢失敗:", err);
+  }
+}
+
+function startTwPolling() {
+  if (twPollTimer) clearInterval(twPollTimer);
+  twPollTimer = setInterval(pollTaiwanStocks, 10000);
+}
+
+// ============================================================================
+// 儲存模式切換
+// ============================================================================
 async function switchStorageMode(nextMode) {
   if (nextMode === storageMode) return;
   const previousMode = storageMode;
@@ -191,7 +328,6 @@ function renderAccountSelector() {
     selector.append(opt);
   }
 
-  // 頂部麵包屑標籤與總覽標題聯動
   const activeAcc = state.activeAccountId === "all" ? null : getAccountById(state.activeAccountId);
   if (elements.currentViewLabel) {
     elements.currentViewLabel.textContent = activeAcc
@@ -225,7 +361,6 @@ function openAccountManager() {
       name.textContent = acc.name;
       left.append(dot, name);
 
-      // 當帳戶數量大於 1 時允許刪除，並具備防呆機制
       if ((state.accounts || []).length > 1) {
         const delBtn = document.createElement("button");
         delBtn.type = "button";
@@ -500,7 +635,6 @@ function makeHoldingRow(holding, activeColumns) {
       symbol.textContent = holding.symbol;
       titleRow.append(symbol);
 
-      // 當位於「全部帳戶總覽」時，標記所屬帳戶名稱徽章
       if (state.activeAccountId === "all") {
         const badge = document.createElement("span");
         badge.className = "account-badge";
@@ -573,13 +707,11 @@ function render() {
 
   if (elements.body) elements.body.replaceChildren();
 
-  // 1. 取得目前帳戶視角下實際有持股 (shares > 0) 的清單
   const accountScopedHoldings = state.holdings.filter((h) => 
     Number(h.shares) > 0 && 
     (!state.activeAccountId || state.activeAccountId === "all" || (h.accountId || DEFAULT_ACCOUNT_ID) === state.activeAccountId)
   );
 
-  // 2. 核心：檢查各市場是否持有股票，未持有則隱藏該市場標籤
   const hasMarket = {
     TW: accountScopedHoldings.some((h) => h.market === "TW"),
     US: accountScopedHoldings.some((h) => h.market === "US"),
@@ -592,21 +724,18 @@ function render() {
     if (filter === "all") {
       tab.hidden = false;
     } else {
-      tab.hidden = !hasMarket[filter]; // 無持股即隱藏
+      tab.hidden = !hasMarket[filter];
     }
   });
 
-  // 安全回退：若當前所在的分頁市場已無任何持股，自動跳回「全部持倉」
   if (activeFilter !== "all" && !hasMarket[activeFilter]) {
     activeFilter = "all";
   }
 
-  // 同步更新分頁按鈕的 active 樣式
   marketTabs.forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.filter === activeFilter);
   });
 
-  // 3. 依選定市場分頁過濾
   const visible = accountScopedHoldings.filter((holding) => activeFilter === "all" || holding.market === activeFilter);
   const sorted = getSortedHoldings(visible);
 
@@ -626,7 +755,6 @@ function render() {
   const tableFooterCount = document.querySelector("#table-footer-count");
   if (tableFooterCount) tableFooterCount.textContent = `顯示 ${visible.length} 筆持倉`;
 
-  // 4. 總覽指標動態計算
   const totals = getPortfolioMetrics(accountScopedHoldings, state.settings);
   const isUsd = state.settings.overviewCurrency === "USD";
   const fxRate = Number(state.settings.fxRate) > 0 ? Number(state.settings.fxRate) : 32.5;
@@ -943,6 +1071,7 @@ function deleteTransaction(holding, transaction) {
   try {
     const updatedHolding = rebuildHolding(holding, state);
     state.holdings = state.holdings.filter((h) => Number(h.shares) > 0);
+    syncUsStreamSubscriptions();
     persist();
     render();
     if (updatedHolding && updatedHolding.shares > 0) openHoldingDetails(updatedHolding);
@@ -958,14 +1087,47 @@ function deleteTransaction(holding, transaction) {
   }
 }
 
+// ----------------------------------------------------------------------------
+// 級聯刪除（Cascade Delete）：徹底清除持倉、交易紀錄與期初結餘
+// ----------------------------------------------------------------------------
 function deleteHolding(holding) {
   const resolvedName = getStockName(holding.symbol) || holding.name || holding.symbol;
   const holdingAccount = getAccountById(holding.accountId || DEFAULT_ACCOUNT_ID);
-  if (!window.confirm(translateText(`確定刪除 ${holding.symbol}（${resolvedName} - ${holdingAccount.name}）及其持倉資料？`, state.settings.language))) return;
+  
+  const relatedTransactions = state.transactions.filter(
+    (item) =>
+      item.symbol?.toUpperCase() === holding.symbol.toUpperCase() &&
+      (!item.market || item.market === holding.market) &&
+      (item.accountId || DEFAULT_ACCOUNT_ID) === (holding.accountId || DEFAULT_ACCOUNT_ID)
+  );
+
+  const confirmMsg = translateText(
+    `確定刪除「${holdingAccount.name}」的 ${holding.symbol}（${resolvedName}）及其持倉資料？\n注意：此操作將一併徹底刪除 ${relatedTransactions.length} 筆關聯的歷史交易明細與期初紀錄，無法還原！`,
+    state.settings.language
+  );
+
+  if (!window.confirm(confirmMsg)) return;
+
   state.holdings = state.holdings.filter((item) => item.id !== holding.id);
+
+  state.transactions = state.transactions.filter(
+    (item) => !(
+      item.symbol?.toUpperCase() === holding.symbol.toUpperCase() &&
+      (!item.market || item.market === holding.market) &&
+      (item.accountId || DEFAULT_ACCOUNT_ID) === (holding.accountId || DEFAULT_ACCOUNT_ID)
+    )
+  );
+
+  const key = ledgerKey(holding);
+  delete state.openingBalances[key];
+
+  if (holding.market === "US") {
+    syncUsStreamSubscriptions();
+  }
+
   persist();
   render();
-  toast(`${holding.symbol} 已刪除。`);
+  toast(`${holding.symbol} 及其 ${relatedTransactions.length} 筆交易紀錄已徹底刪除。`);
 }
 
 function openEditDialog(holding) {
@@ -1045,7 +1207,7 @@ function validatePositiveFormValues(form, names, errorElement) {
   return true;
 }
 
-// ----------------- 安全並行報價查詢（二階段原子化更新） -----------------
+// ----------------- 安全並行報價查詢 -----------------
 async function safeFetchQuoteUpdate(holding) {
   try {
     const result = await fetchQuote(holding.symbol, undefined, state.settings);
@@ -1143,7 +1305,6 @@ document.querySelector("#edit-form")?.addEventListener("submit", (event) => {
   if (!holding) return;
   const newSymbol = normalizeSymbol(form.elements.symbol?.value || "", holding.market);
   
-  // 重複性檢查：限定於同一帳戶內
   const duplicate = state.holdings.find((item) => 
     item.id !== holding.id && 
     item.symbol.toUpperCase() === newSymbol && 
@@ -1173,6 +1334,7 @@ document.querySelector("#edit-form")?.addEventListener("submit", (event) => {
     state.openingBalances[ledgerKey(holding)] = holdingBalance(holding);
   }
   if (holding.shares <= 0) state.holdings = state.holdings.filter((item) => item.id !== holding.id);
+  syncUsStreamSubscriptions();
   persist();
   render();
   document.querySelector("#edit-dialog")?.close();
@@ -1220,18 +1382,26 @@ document.querySelector("#settings-form")?.addEventListener("submit", (event) => 
     form.elements.quoteApiUrl?.focus();
     return;
   }
+
+  const finnhubToken = form.elements.finnhubToken?.value.trim() || "";
+
   state.settings = {
     ...state.settings,
     language: form.elements.language?.value || "zh-TW",
     quoteProvider: form.elements.quoteProvider?.value === "yahoo" ? "yahoo" : "render-api",
     quoteApiUrl,
+    finnhubToken,
     ...Object.fromEntries(numericSettingKeys.map((key) => [key, Number(form.elements[key]?.value) || 0])),
   };
+
+  usStream.setToken(finnhubToken);
+  syncUsStreamSubscriptions();
+
   persist();
   render();
   txDialog.updateTransactionFields();
   document.querySelector("#settings-dialog")?.close();
-  toast("手續費與匯率設定已儲存。");
+  toast("設定已儲存，行情連線已同步更新。");
 });
 
 document.querySelector("#storage-mode")?.addEventListener("change", (event) => {
@@ -1310,7 +1480,6 @@ document.querySelector("#shared-file-disconnect")?.addEventListener("click", () 
   cloudSync.runAction(() => cloudSync.disconnect(storageMode), storageMode);
 });
 
-// 二階段報價批次更新：避免並行抓取過程中的狀態衝突與覆蓋
 document.querySelector("#refresh-quotes")?.addEventListener("click", async (event) => {
   const button = event.currentTarget;
   const activeHoldings = state.holdings.filter((h) => Number(h.shares) > 0);
@@ -1321,8 +1490,6 @@ document.querySelector("#refresh-quotes")?.addEventListener("click", async (even
 
   try {
     const quoteResults = await mapWithConcurrency(activeHoldings, 3, safeFetchQuoteUpdate);
-    
-    // 原子化合併更新
     let successCount = 0;
     for (const update of quoteResults) {
       if (update.success) {
@@ -1353,6 +1520,16 @@ document.querySelector("#refresh-quotes")?.addEventListener("click", async (even
   }
 });
 
+document.querySelector("#us-stream-mode-toggle")?.addEventListener("click", () => {
+  const currentMode = state.settings.usStreamMode || "standard";
+  const nextMode = currentMode === "standard" ? "geek" : "standard";
+  state.settings.usStreamMode = nextMode;
+  usStream.setMode(nextMode);
+  persist();
+  updateStreamModeButtonUI(nextMode);
+  toast(`已切換為美股 ${nextMode === "geek" ? "極客模式 (24H Ticks)" : "標準模式 (常規盤 5s 節流)"}`);
+});
+
 const footerYear = document.querySelector("#footer-year");
 if (footerYear) footerYear.textContent = new Date().getFullYear();
 
@@ -1373,5 +1550,12 @@ document.querySelectorAll(".nav-item[href]").forEach((link) => link.addEventList
 }));
 
 if (state.storageError) toast("讀取已儲存資料時發生問題，目前顯示空白資料。", true);
+
+// 系統初始化執行
 render();
 cloudSync.init(storageMode);
+usStream.connect();
+syncUsStreamSubscriptions();
+startTwPolling();
+pollTaiwanStocks();
+updateStreamModeButtonUI(state.settings.usStreamMode || "standard");
