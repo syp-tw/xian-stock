@@ -1,19 +1,25 @@
-// js/app.js - 主入口模組（整合多帳戶系統、UI 表格、投資總覽、雲端同步、美股 WebSocket 串流安全交握與台股自動輪詢）
+// js/app.js - 前端主控調度模組（整合多格式匯入匯出、Google 試算表全平台同步、美股 WebSocket 串流與多帳戶管理）
 import { getHoldingMetrics, getPortfolioMetrics } from "./calculations.js";
-import { parseBackup, serializeBackup, serializeCsv } from "./backup.js";
+import { 
+  parseBackup, serializeBackup, serializeJsBackup, 
+  serializeCsv, parseCsvBackup, serializeExcel, parseExcelBackup 
+} from "./backup.js";
 import { applyTranslations, formatMoney, formatQuantity, formatTwd, locale, translateText } from "./i18n.js";
 import { 
   loadState, loadStorageMode, saveState, saveStorageMode, 
-  BASE_COLUMNS, DEFAULT_SETTINGS, DEFAULT_ACCOUNT_ID, DEFAULT_ACCOUNTS 
+  BASE_COLUMNS, DEFAULT_SETTINGS, DEFAULT_ACCOUNT_ID 
 } from "./storage.js";
-import { fetchQuote, getStockName } from "./quotes.js";
+import { getStockName } from "./quotes.js";
 import { 
   normalizeSymbol, ledgerKey, transactionsForHolding, 
   holdingBalance, rebuildHolding, makeId, today 
 } from "./ledger.js";
 import { CloudSyncManager } from "./cloud-sync.js";
+import { GoogleSheetSyncManager } from "./google-sheet-sync.js";
 import { TransactionDialog } from "./dialog-transaction.js";
 import { UsStockStreamManager } from "./us-stream.js";
+import { getAccountById, renderAccountSelector, openAccountManager } from "./ui-accounts.js";
+import { MarketPoller } from "./market-poller.js";
 
 let storageMode = loadStorageMode();
 const state = loadState(storageMode);
@@ -72,6 +78,7 @@ function persist() {
     return;
   }
   if (storageMode === "cloud") cloudSync.scheduleSave(storageMode);
+  if (storageMode === "google-sheet") googleSheetSync.scheduleAutoSave();
 }
 
 function replaceState(nextState, { syncCloud = true } = {}) {
@@ -84,6 +91,7 @@ function replaceState(nextState, { syncCloud = true } = {}) {
     throw new Error("無法儲存匯入資料，原有資料未變更。");
   }
   if (storageMode === "cloud" && syncCloud) cloudSync.scheduleSave(storageMode);
+  if (storageMode === "google-sheet") googleSheetSync.scheduleAutoSave();
   const langSetting = document.querySelector("#language-setting");
   if (langSetting) langSetting.value = state.settings.language;
   syncUsStreamSubscriptions();
@@ -101,10 +109,17 @@ function downloadFile(filename, content, type) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// ----------------- 雲端同步與交握模組實例化 -----------------
 const cloudSync = new CloudSyncManager({
   getState: () => state,
   onStateReplace: replaceState,
   render,
+  toast,
+});
+
+const googleSheetSync = new GoogleSheetSyncManager({
+  getState: () => state,
+  onStateReplace: replaceState,
   toast,
 });
 
@@ -121,9 +136,6 @@ const txDialog = new TransactionDialog({
   toast,
 });
 
-// ============================================================================
-// 後端安全交握：動態取得 WebSocket 網址，不在前端儲存任何 Token
-// ============================================================================
 function getBackendBaseUrl() {
   try {
     const url = new URL(state.settings.quoteApiUrl || "https://my-stock-api-nhaj.onrender.com/api/realtime");
@@ -144,17 +156,20 @@ async function fetchUsWsUrl() {
   return data.ws_url;
 }
 
-// 實例化美股串流管理器（傳入交握函式 fetchUsWsUrl）
 const usStream = new UsStockStreamManager({
   getWsUrl: fetchUsWsUrl,
   token: state.settings.finnhubToken || "",
   mode: state.settings.usStreamMode || "standard",
-  onPriceUpdate: ({ symbol, price, timestamp, volume, mode }) => {
+  onPriceUpdate: ({ symbol, price, timestamp }) => {
     let hasUpdated = false;
     for (const holding of state.holdings) {
       if (holding.market === "US" && holding.symbol.toUpperCase() === symbol.toUpperCase()) {
         holding.currentPrice = price;
         holding.updatedAt = new Date(timestamp).toISOString();
+
+        if (holding.previousClose !== null && holding.previousClose !== undefined && Number(holding.previousClose) > 0) {
+          holding.dailyChangePerShare = price - Number(holding.previousClose);
+        }
         hasUpdated = true;
       }
     }
@@ -197,68 +212,31 @@ function updateStreamModeButtonUI(mode) {
   btn.className = `stream-mode-btn ${isGeek ? "active-geek" : "active-standard"}`;
 }
 
-// ============================================================================
-// 台股背景自動輪詢（10 秒週期）
-// ============================================================================
-let twPollTimer = null;
+const marketPoller = new MarketPoller({
+  getState: () => state,
+  persist,
+  render,
+  usStream,
+  toast,
+});
 
-async function pollTaiwanStocks() {
-  const activeTwHoldings = state.holdings.filter((h) => h.market === "TW" && Number(h.shares) > 0);
-  if (!activeTwHoldings.length) return;
-
-  const codes = [...new Set(activeTwHoldings.map((h) => h.symbol.replace(/\.(TW|TWO)$/i, "")))].join(",");
-  if (!codes) return;
-
-  try {
-    const rawApiUrl = state.settings.quoteApiUrl || "https://my-stock-api-nhaj.onrender.com/api/realtime";
-    const parsedUrl = new URL(rawApiUrl);
-    parsedUrl.searchParams.set("tw_codes", codes);
-    parsedUrl.searchParams.delete("us_symbols");
-
-    const response = await fetch(parsedUrl.toString());
-    if (!response.ok) return;
-
-    const data = await response.json();
-    const twData = data.tw || {};
-    let hasChanged = false;
-
-    for (const holding of activeTwHoldings) {
-      const code = holding.symbol.replace(/\.(TW|TWO)$/i, "");
-      const quote = twData[code];
-      if (quote && Number(quote.price) > 0) {
-        holding.currentPrice = Number(quote.price);
-        if (quote.name && (!holding.name || holding.name === holding.symbol)) {
-          holding.name = quote.name;
-        }
-        if (quote.d !== undefined) {
-          holding.dailyChangePerShare = Number(quote.d);
-        }
-        holding.updatedAt = new Date().toISOString();
-        hasChanged = true;
-      }
-    }
-
-    if (hasChanged) {
-      persist();
-      render();
-    }
-  } catch (err) {
-    console.error("台股背景輪詢失敗:", err);
-  }
-}
-
-function startTwPolling() {
-  if (twPollTimer) clearInterval(twPollTimer);
-  twPollTimer = setInterval(pollTaiwanStocks, 10000);
-}
-
-// ============================================================================
-// 儲存模式切換
-// ============================================================================
+// ----------------- 儲存模式切換（支援本機、PC共用檔與 Google 試算表） -----------------
 async function switchStorageMode(nextMode) {
   if (nextMode === storageMode) return;
   const previousMode = storageMode;
-  if (nextMode === "cloud") {
+
+  if (nextMode === "google-sheet") {
+    const webhook = state.settings.googleSheetWebhook;
+    if (!googleSheetSync.isValidWebhookUrl(webhook)) {
+      document.querySelector("#storage-mode").value = previousMode;
+      toast("請先在偏好設定中填寫正確的 Google 試算表 Webhook 網址。", true);
+      return;
+    }
+    if (!saveStorageMode("google-sheet")) throw new Error("無法儲存儲存位置設定。");
+    storageMode = "google-sheet";
+    await googleSheetSync.pushToGoogleSheet({ silent: false });
+    toast("已切換為 Google 試算表全平台雲端同步！後續變更自動同步。");
+  } else if (nextMode === "cloud") {
     if (!cloudSync.cloudFileReady || !cloudSync.sharedFileRecord?.handle) {
       document.querySelector("#storage-mode").value = previousMode;
       cloudSync.updateControls("請先連結並載入或建立共用檔案，再切換至雲端模式。", storageMode);
@@ -292,6 +270,7 @@ async function switchStorageMode(nextMode) {
       throw error;
     }
   }
+
   cloudSync.updateControls(undefined, storageMode);
   const settingsForm = document.querySelector("#settings-form");
   if (settingsForm) {
@@ -301,135 +280,10 @@ async function switchStorageMode(nextMode) {
   }
 }
 
-// ----------------- 多帳戶管理與選單控制 -----------------
-const ACCOUNT_COLORS = ["#418874", "#3b73af", "#b35c44", "#7b5cb7", "#a07830", "#3a8589"];
-
-function getAccountById(accountId) {
-  return state.accounts?.find((a) => a.id === accountId) || { id: accountId, name: "主要帳戶", color: "#418874" };
-}
-
-function renderAccountSelector() {
-  const selector = elements.accountSelector;
-  if (!selector) return;
-
-  selector.replaceChildren();
-
-  const allOption = document.createElement("option");
-  allOption.value = "all";
-  allOption.textContent = translateText("🌐 全部帳戶總覽", state.settings.language);
-  allOption.selected = state.activeAccountId === "all";
-  selector.append(allOption);
-
-  for (const acc of (state.accounts || [])) {
-    const opt = document.createElement("option");
-    opt.value = acc.id;
-    opt.textContent = `💼 ${acc.name}`;
-    opt.selected = state.activeAccountId === acc.id;
-    selector.append(opt);
-  }
-
-  const activeAcc = state.activeAccountId === "all" ? null : getAccountById(state.activeAccountId);
-  if (elements.currentViewLabel) {
-    elements.currentViewLabel.textContent = activeAcc
-      ? activeAcc.name
-      : translateText("全部帳戶總覽", state.settings.language);
-  }
-  if (elements.summaryAccountTitle) {
-    elements.summaryAccountTitle.textContent = activeAcc
-      ? `${translateText("目前投資總市值", state.settings.language)}（${activeAcc.name}）`
-      : `${translateText("目前投資總市值", state.settings.language)}（${translateText("全部帳戶", state.settings.language)}）`;
-  }
-}
-
-function openAccountManager() {
-  const dialog = document.querySelector("#accounts-dialog");
-  const list = document.querySelector("#accounts-list");
-  if (!dialog || !list) return;
-
-  function renderList() {
-    list.replaceChildren();
-    for (const acc of (state.accounts || [])) {
-      const li = document.createElement("li");
-      li.className = "account-item";
-
-      const left = document.createElement("div");
-      left.className = "account-item-left";
-      const dot = document.createElement("span");
-      dot.className = "account-color-dot";
-      dot.style.backgroundColor = acc.color || "#418874";
-      const name = document.createElement("strong");
-      name.textContent = acc.name;
-      left.append(dot, name);
-
-      if ((state.accounts || []).length > 1) {
-        const delBtn = document.createElement("button");
-        delBtn.type = "button";
-        delBtn.className = "row-action danger";
-        delBtn.textContent = translateText("刪除", state.settings.language);
-        delBtn.addEventListener("click", () => {
-          const hasHoldings = state.holdings.some((h) => (h.accountId || DEFAULT_ACCOUNT_ID) === acc.id && Number(h.shares) > 0);
-          const hasTransactions = state.transactions.some((t) => (t.accountId || DEFAULT_ACCOUNT_ID) === acc.id);
-
-          if (hasHoldings || hasTransactions) {
-            alert(translateText("此帳戶內仍有持倉或交易紀錄，無法直接刪除。請先將持倉出清或轉移。", state.settings.language));
-            return;
-          }
-
-          if (window.confirm(translateText(`確定刪除「${acc.name}」帳戶？`, state.settings.language))) {
-            state.accounts = state.accounts.filter((a) => a.id !== acc.id);
-            if (state.activeAccountId === acc.id) {
-              state.activeAccountId = "all";
-            }
-            persist();
-            renderAccountSelector();
-            renderList();
-            render();
-            toast(`已刪除「${acc.name}」帳戶。`);
-          }
-        });
-        li.append(left, delBtn);
-      } else {
-        li.append(left);
-      }
-
-      list.append(li);
-    }
-  }
-
-  const addForm = document.querySelector("#add-account-form");
-  if (addForm) {
-    addForm.onsubmit = (e) => {
-      e.preventDefault();
-      const input = document.querySelector("#new-account-name");
-      const name = input?.value.trim();
-      if (!name) return;
-
-      if (state.accounts.some((a) => a.name.toLowerCase() === name.toLowerCase())) {
-        toast("已經有同名的投資帳戶。", true);
-        return;
-      }
-
-      const newId = makeId();
-      const nextColor = ACCOUNT_COLORS[state.accounts.length % ACCOUNT_COLORS.length];
-      state.accounts.push({ id: newId, name, color: nextColor });
-      input.value = "";
-      persist();
-      renderAccountSelector();
-      renderList();
-      render();
-      toast(`已新增「${name}」帳戶。`);
-    };
-  }
-
-  renderList();
-  dialog.showModal();
-}
-
 // ----------------- 欄位配置與排序核心邏輯 -----------------
 function getActiveColumns() {
   const customMap = new Map(state.customFields.map((f) => [f.id, { id: f.id, label: f.name, isCustom: true }]));
   const baseMap = new Map(BASE_COLUMNS.map((c) => [c.id, c]));
-
   const combined = [];
   const currentOrder = state.settings.columnOrder || DEFAULT_SETTINGS.columnOrder;
 
@@ -437,13 +291,9 @@ function getActiveColumns() {
     if (baseMap.has(colId)) combined.push(baseMap.get(colId));
     else if (customMap.has(colId)) combined.push(customMap.get(colId));
   }
-
   for (const [id, field] of customMap.entries()) {
-    if (!combined.some((c) => c.id === id)) {
-      combined.splice(combined.length - 1, 0, field);
-    }
+    if (!combined.some((c) => c.id === id)) combined.splice(combined.length - 1, 0, field);
   }
-
   for (const baseCol of BASE_COLUMNS) {
     if (!combined.some((c) => c.id === baseCol.id)) {
       const defIdx = DEFAULT_SETTINGS.columnOrder.indexOf(baseCol.id);
@@ -614,7 +464,7 @@ function makeHoldingRow(holding, activeColumns) {
 
   const metrics = getHoldingMetrics(holding);
   const autoResolvedName = getStockName(holding.symbol) || holding.name || holding.symbol;
-  const holdingAccount = getAccountById(holding.accountId || DEFAULT_ACCOUNT_ID);
+  const holdingAccount = getAccountById(holding.accountId || DEFAULT_ACCOUNT_ID, state);
 
   for (const col of activeColumns) {
     if (col.id === "symbol") {
@@ -703,7 +553,7 @@ function makeHoldingRow(holding, activeColumns) {
 function render() {
   const activeColumns = getActiveColumns();
   renderTableHeaders();
-  if (typeof renderAccountSelector === "function") renderAccountSelector();
+  renderAccountSelector({ state, elements });
 
   if (elements.body) elements.body.replaceChildren();
 
@@ -721,11 +571,8 @@ function render() {
   const marketTabs = document.querySelectorAll(".table-tab[data-filter]");
   marketTabs.forEach((tab) => {
     const filter = tab.dataset.filter;
-    if (filter === "all") {
-      tab.hidden = false;
-    } else {
-      tab.hidden = !hasMarket[filter];
-    }
+    if (filter === "all") tab.hidden = false;
+    else tab.hidden = !hasMarket[filter];
   });
 
   if (activeFilter !== "all" && !hasMarket[activeFilter]) {
@@ -755,6 +602,7 @@ function render() {
   const tableFooterCount = document.querySelector("#table-footer-count");
   if (tableFooterCount) tableFooterCount.textContent = `顯示 ${visible.length} 筆持倉`;
 
+  // 指標總覽動態換算
   const totals = getPortfolioMetrics(accountScopedHoldings, state.settings);
   const isUsd = state.settings.overviewCurrency === "USD";
   const fxRate = Number(state.settings.fxRate) > 0 ? Number(state.settings.fxRate) : 32.5;
@@ -829,7 +677,7 @@ function render() {
   applyTranslations(state.settings.language);
 }
 
-// ----------------- 欄位順序自訂彈窗 -----------------
+// ----------------- 自訂欄位彈窗 -----------------
 function openColumnManager() {
   const dialog = document.querySelector("#column-manager-dialog");
   if (!dialog) return;
@@ -852,7 +700,11 @@ function openColumnManager() {
       if (!orderedCols.some((c) => c.id === id)) orderedCols.splice(orderedCols.length - 1, 0, field);
     }
     for (const baseCol of BASE_COLUMNS) {
-      if (!orderedCols.some((c) => c.id === baseCol.id)) orderedCols.splice(orderedCols.length - 1, 0, baseCol);
+      if (!orderedCols.some((c) => c.id === baseCol.id)) {
+        const defIdx = DEFAULT_SETTINGS.columnOrder.indexOf(baseCol.id);
+        const insertAt = defIdx >= 0 && defIdx < combined.length ? defIdx : combined.length - 1;
+        orderedCols.splice(insertAt, 0, baseCol);
+      }
     }
 
     const hiddenSet = new Set(state.settings.hiddenColumns || DEFAULT_SETTINGS.hiddenColumns);
@@ -952,7 +804,7 @@ function openHoldingDetails(holding) {
   const dialog = document.querySelector("#holding-details-dialog");
   const detailsTitle = document.querySelector("#details-title");
   const autoResolvedName = getStockName(holding.symbol) || holding.name || holding.symbol;
-  const holdingAccount = getAccountById(holding.accountId || DEFAULT_ACCOUNT_ID);
+  const holdingAccount = getAccountById(holding.accountId || DEFAULT_ACCOUNT_ID, state);
   
   if (detailsTitle) {
     detailsTitle.textContent = `${holding.symbol}｜${autoResolvedName}（${holdingAccount.name}）`;
@@ -1087,12 +939,10 @@ function deleteTransaction(holding, transaction) {
   }
 }
 
-// ----------------------------------------------------------------------------
-// 級聯刪除（Cascade Delete）：徹底清除持倉、交易紀錄與期初結餘
-// ----------------------------------------------------------------------------
+// ----------------- 級聯刪除（Cascade Delete） -----------------
 function deleteHolding(holding) {
   const resolvedName = getStockName(holding.symbol) || holding.name || holding.symbol;
-  const holdingAccount = getAccountById(holding.accountId || DEFAULT_ACCOUNT_ID);
+  const holdingAccount = getAccountById(holding.accountId || DEFAULT_ACCOUNT_ID, state);
   
   const relatedTransactions = state.transactions.filter(
     (item) =>
@@ -1207,46 +1057,69 @@ function validatePositiveFormValues(form, names, errorElement) {
   return true;
 }
 
-// ----------------- 安全並行報價查詢 -----------------
-async function safeFetchQuoteUpdate(holding) {
+// ----------------- 內建 Google Apps Script 程式碼字串（供一鍵複製） -----------------
+const GOOGLE_APPS_SCRIPT_TEMPLATE = `// 鮮存股 - 個人 Google 試算表同步專用腳本
+function getOrCreateSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("_xian_stock_db");
+  if (!sheet) {
+    sheet = ss.insertSheet("_xian_stock_db");
+    sheet.hideSheet();
+  }
+  return sheet;
+}
+
+function doGet(e) {
   try {
-    const result = await fetchQuote(holding.symbol, undefined, state.settings);
-    return {
-      id: holding.id,
-      success: true,
-      price: result.price,
-      dailyChangePerShare: result.dailyChangePerShare,
-      name: result.name,
-      updatedAt: new Date().toISOString(),
-    };
-  } catch (error) {
-    console.error(`更新 ${holding.symbol} 報價失敗：`, error);
-    return { id: holding.id, success: false };
+    var sheet = getOrCreateSheet();
+    var payload = sheet.getRange("A1").getValue();
+    if (!payload) {
+      return ContentService.createTextOutput(JSON.stringify({ empty: true })).setMimeType(ContentService.MimeType.JSON);
+    }
+    return ContentService.createTextOutput(payload).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ error: err.toString() })).setMimeType(ContentService.MimeType.JSON);
   }
 }
 
-async function mapWithConcurrency(items, concurrency, asyncFn) {
-  const results = [];
-  const executing = new Set();
-  for (const item of items) {
-    const promise = Promise.resolve().then(() => asyncFn(item));
-    results.push(promise);
-    executing.add(promise);
-    const clean = () => executing.delete(promise);
-    promise.then(clean, clean);
-    if (executing.size >= concurrency) {
-      await Promise.race(executing);
-    }
+function doPost(e) {
+  try {
+    var postData = e.postData.contents;
+    var parsed = JSON.parse(postData);
+    var sheet = getOrCreateSheet();
+    sheet.getRange("A1").setValue(JSON.stringify(parsed));
+    updateHumanReadableHoldings(parsed.data ? parsed.data.holdings : parsed.holdings);
+    return ContentService.createTextOutput(JSON.stringify({ status: "success", updatedAt: new Date().toISOString() })).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: err.toString() })).setMimeType(ContentService.MimeType.JSON);
   }
-  return Promise.all(results);
 }
+
+function updateHumanReadableHoldings(holdings) {
+  if (!Array.isArray(holdings)) return;
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("我的庫存總覽") || ss.insertSheet("我的庫存總覽");
+  sheet.clear();
+  sheet.appendRow(["股票代號", "名稱", "市場", "持有股數", "總成本", "目前現價", "累計股息", "更新時間"]);
+  holdings.forEach(function(h) {
+    sheet.appendRow([h.symbol, h.name, h.market, h.shares, h.costBasis, h.currentPrice, h.dividends || 0, new Date()]);
+  });
+}`;
 
 // ----------------- 全域按鈕與事件綁定 -----------------
 document.querySelector("#add-holding")?.addEventListener("click", () => txDialog.open());
 document.querySelector("#add-holding-table")?.addEventListener("click", () => txDialog.open());
 document.querySelector("#empty-add-holding")?.addEventListener("click", () => txDialog.open());
 document.querySelector("#manage-columns-btn")?.addEventListener("click", openColumnManager);
-document.querySelector("#manage-accounts-btn")?.addEventListener("click", openAccountManager);
+document.querySelector("#manage-accounts-btn")?.addEventListener("click", () => {
+  openAccountManager({
+    state,
+    persist,
+    renderAccountSelector: () => renderAccountSelector({ state, elements }),
+    render,
+    toast,
+  });
+});
 
 elements.accountSelector?.addEventListener("change", (e) => {
   state.activeAccountId = e.target.value;
@@ -1324,6 +1197,11 @@ document.querySelector("#edit-form")?.addEventListener("submit", (event) => {
   holding.costBasis = Number(form.elements.costBasis?.value);
   holding.currentPrice = Number(form.elements.currentPrice?.value);
   holding.fees = Number(form.elements.fees?.value);
+
+  if (holding.previousClose && Number(holding.previousClose) > 0) {
+    holding.dailyChangePerShare = holding.currentPrice - Number(holding.previousClose);
+  }
+
   holding.custom = { ...holding.custom };
   for (const field of state.customFields) {
     holding.custom[field.id] = form.elements[`custom-${field.id}`]?.value.trim() || "";
@@ -1384,6 +1262,7 @@ document.querySelector("#settings-form")?.addEventListener("submit", (event) => 
   }
 
   const finnhubToken = form.elements.finnhubToken?.value.trim() || "";
+  const googleSheetWebhook = form.elements.googleSheetWebhook?.value.trim() || "";
 
   state.settings = {
     ...state.settings,
@@ -1391,6 +1270,7 @@ document.querySelector("#settings-form")?.addEventListener("submit", (event) => 
     quoteProvider: form.elements.quoteProvider?.value === "yahoo" ? "yahoo" : "render-api",
     quoteApiUrl,
     finnhubToken,
+    googleSheetWebhook,
     ...Object.fromEntries(numericSettingKeys.map((key) => [key, Number(form.elements[key]?.value) || 0])),
   };
 
@@ -1401,7 +1281,7 @@ document.querySelector("#settings-form")?.addEventListener("submit", (event) => 
   render();
   txDialog.updateTransactionFields();
   document.querySelector("#settings-dialog")?.close();
-  toast("設定已儲存，行情連線已同步更新。");
+  toast("設定已儲存，行情與同步連線已更新。");
 });
 
 document.querySelector("#storage-mode")?.addEventListener("change", (event) => {
@@ -1416,38 +1296,129 @@ document.querySelector("#storage-mode")?.addEventListener("change", (event) => {
   }, storageMode);
 });
 
-document.querySelector("#export-backup")?.addEventListener("click", () => {
-  const date = today();
-  downloadFile(`xian-stock-backup-${date}.json`, serializeBackup(state), "application/json;charset=utf-8");
+// ----------------- 多格式匯出 (JSON / JS / CSV / XLS) -----------------
+document.querySelector("#export-backup-json")?.addEventListener("click", () => {
+  downloadFile(`xian-stock-backup-${today()}.json`, serializeBackup(state), "application/json;charset=utf-8");
   toast("JSON 完整備份已下載。");
 });
 
-document.querySelector("#export-csv")?.addEventListener("click", () => {
+document.querySelector("#export-backup-js")?.addEventListener("click", () => {
+  downloadFile(`xian-stock-backup-${today()}.js`, serializeJsBackup(state), "application/javascript;charset=utf-8");
+  toast("JS 格式備份已下載。");
+});
+
+document.querySelector("#export-backup-csv")?.addEventListener("click", () => {
   downloadFile(`xian-stock-export-${today()}.csv`, serializeCsv(state), "text/csv;charset=utf-8");
-  toast("CSV 試算表資料已下載。");
+  toast("CSV 試算表已下載。");
 });
 
-document.querySelector("#import-backup")?.addEventListener("click", () => {
-  document.querySelector("#import-backup-file")?.click();
+document.querySelector("#export-backup-xls")?.addEventListener("click", () => {
+  try {
+    const blob = serializeExcel(state);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `xian-stock-export-${today()}.xlsx`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("Excel (XLSX) 活頁簿已下載。");
+  } catch (err) {
+    toast(err.message, true);
+  }
 });
 
-document.querySelector("#import-backup-file")?.addEventListener("change", async (event) => {
+// ----------------- 多格式統一匯入 (JSON / JS / CSV / XLS) -----------------
+document.querySelector("#import-backup-btn")?.addEventListener("click", () => {
+  document.querySelector("#import-file-unified")?.click();
+});
+
+document.querySelector("#import-file-unified")?.addEventListener("change", async (event) => {
   const input = event.currentTarget;
   const file = input.files?.[0];
   if (!file) return;
+
   try {
-    if (file.size > 20 * 1024 * 1024) throw new Error("備份檔超過 20 MB，無法匯入。");
-    const imported = parseBackup(await file.text());
-    if (!window.confirm(translateText("還原備份會取代這個瀏覽器目前的庫存、交易與設定。建議先下載目前資料備份。是否繼續？", state.settings.language))) return;
+    if (file.size > 25 * 1024 * 1024) throw new Error("檔案超過 25 MB，無法匯入。");
+    const ext = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+    let imported;
+
+    if (ext === ".xlsx" || ext === ".xls") {
+      const buf = await file.arrayBuffer();
+      imported = parseExcelBackup(buf);
+    } else if (ext === ".csv") {
+      const text = await file.text();
+      imported = parseCsvBackup(text);
+    } else if (ext === ".json" || ext === ".js") {
+      const text = await file.text();
+      imported = parseBackup(text);
+    } else {
+      throw new Error("不支援的格式，請匯入 JSON、JS、CSV 或 Excel (XLSX/XLS)。");
+    }
+
+    if (!window.confirm(translateText("還原/匯入檔案會更新目前的投資庫存與交易紀錄。建議先下載目前資料備份。是否繼續？", state.settings.language))) {
+      return;
+    }
+
     replaceState(imported);
-    toast("資料已從 JSON 備份還原。");
+    toast(`已成功由 ${file.name} 還原/匯入資料！`);
   } catch (error) {
-    toast(translateText(error.message || "無法匯入備份檔。", state.settings.language), true);
+    toast(translateText(error.message || "無法匯入檔案。", state.settings.language), true);
   } finally {
     input.value = "";
   }
 });
 
+// ----------------- 一鍵複製 Google Apps Script 腳本 -----------------
+document.querySelector("#copy-gas-script-btn")?.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_TEMPLATE);
+    toast("✅ 試算表專用腳本已複製！請前往 Google 試算表 Apps Script 貼上。");
+  } catch (err) {
+    const textarea = document.createElement("textarea");
+    textarea.value = GOOGLE_APPS_SCRIPT_TEMPLATE;
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
+    toast("✅ 試算表專用腳本已複製！");
+  }
+});
+
+// ----------------- 測試 Google 試算表連線防呆 -----------------
+document.querySelector("#google-sheet-test")?.addEventListener("click", async () => {
+  const webhookInput = document.querySelector("#google-sheet-webhook");
+  const url = webhookInput?.value.trim();
+  
+  if (!url || !url.startsWith("https://script.google.com/macros/s/") || !url.endsWith("/exec")) {
+    toast("⚠️ 網址格式不正確，必須是 https://script.google.com/macros/s/.../exec", true);
+    return;
+  }
+
+  toast("正在測試 Google 試算表連線…");
+  try {
+    const res = await fetch(url, { method: "GET" });
+    if (!res.ok) throw new Error(`HTTP 錯誤碼 ${res.status}`);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    toast("🎉 連線成功！Google 試算表已準備就緒，可正常同步。");
+  } catch (error) {
+    console.error("測試連線失敗:", error);
+    toast("❌ 連線失敗！請檢查部署時「誰可以存取」是否選為「所有人 (Anyone)」。", true);
+  }
+});
+
+// ----------------- Google 試算表手動 Push / Pull -----------------
+document.querySelector("#google-sheet-push")?.addEventListener("click", () => {
+  googleSheetSync.pushToGoogleSheet({ silent: false });
+});
+
+document.querySelector("#google-sheet-pull")?.addEventListener("click", () => {
+  googleSheetSync.pullFromGoogleSheet({ silent: false });
+});
+
+// ----------------- 共用檔案 (File System Access) -----------------
 document.querySelector("#shared-file-open")?.addEventListener("click", () => {
   cloudSync.runAction(() => cloudSync.selectAndLoadFile(storageMode), storageMode);
 });
@@ -1480,44 +1451,8 @@ document.querySelector("#shared-file-disconnect")?.addEventListener("click", () 
   cloudSync.runAction(() => cloudSync.disconnect(storageMode), storageMode);
 });
 
-document.querySelector("#refresh-quotes")?.addEventListener("click", async (event) => {
-  const button = event.currentTarget;
-  const activeHoldings = state.holdings.filter((h) => Number(h.shares) > 0);
-  if (!activeHoldings.length) return toast("目前沒有庫存可更新報價。");
-  
-  button.classList.add("loading");
-  button.disabled = true;
-
-  try {
-    const quoteResults = await mapWithConcurrency(activeHoldings, 3, safeFetchQuoteUpdate);
-    let successCount = 0;
-    for (const update of quoteResults) {
-      if (update.success) {
-        const target = state.holdings.find((h) => h.id === update.id);
-        if (target) {
-          target.currentPrice = update.price;
-          target.dailyChangePerShare = update.dailyChangePerShare;
-          target.updatedAt = update.updatedAt;
-          if (update.name && (!target.name || target.name === target.symbol)) {
-            target.name = update.name;
-          }
-          successCount++;
-        }
-      }
-    }
-
-    persist();
-    render();
-    
-    if (successCount === activeHoldings.length) {
-      toast(`已更新 ${successCount} 檔股票報價。`);
-    } else {
-      toast(`${successCount} / ${activeHoldings.length} 檔報價更新成功，失敗項目請稍後重試。`, successCount === 0);
-    }
-  } finally {
-    button.classList.remove("loading");
-    button.disabled = false;
-  }
+document.querySelector("#refresh-quotes")?.addEventListener("click", () => {
+  marketPoller.refreshAllQuotes({ silent: false });
 });
 
 document.querySelector("#us-stream-mode-toggle")?.addEventListener("click", () => {
@@ -1551,11 +1486,12 @@ document.querySelectorAll(".nav-item[href]").forEach((link) => link.addEventList
 
 if (state.storageError) toast("讀取已儲存資料時發生問題，目前顯示空白資料。", true);
 
-// 系統初始化執行
+// ============================================================================
+// 系統啟動生命週期：依序初始化渲染、雲端同步、串流連接與報價首刷
+// ============================================================================
 render();
 cloudSync.init(storageMode);
 usStream.connect();
 syncUsStreamSubscriptions();
-startTwPolling();
-pollTaiwanStocks();
+marketPoller.start();
 updateStreamModeButtonUI(state.settings.usStreamMode || "standard");

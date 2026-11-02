@@ -110,6 +110,9 @@ function normalizeHolding(item) {
     shares: Math.max(0, Number(item.shares) || 0),
     costBasis: Math.max(0, Number(item.costBasis) || 0),
     currentPrice: Math.max(0, Number(item.currentPrice) || 0),
+    previousClose: item.previousClose !== null && item.previousClose !== undefined && Number.isFinite(Number(item.previousClose))
+      ? Number(item.previousClose)
+      : null,
     dailyChangePerShare: item.dailyChangePerShare !== null
       && item.dailyChangePerShare !== undefined
       && Number.isFinite(Number(item.dailyChangePerShare))

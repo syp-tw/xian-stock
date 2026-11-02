@@ -7,11 +7,15 @@ export function getHoldingMetrics(holding) {
   const marketValue = price * shares;
   const profit = marketValue - cost;
 
-  const dailyProfit = holding.dailyChangePerShare !== null
-    && holding.dailyChangePerShare !== undefined
-    && Number.isFinite(Number(holding.dailyChangePerShare))
-    ? Number(holding.dailyChangePerShare) * shares
-    : null;
+  // 優先使用 dailyChangePerShare；若無，則由 (currentPrice - previousClose) 即時動態換算
+  let dailyChange = null;
+  if (holding.dailyChangePerShare !== null && holding.dailyChangePerShare !== undefined && Number.isFinite(Number(holding.dailyChangePerShare))) {
+    dailyChange = Number(holding.dailyChangePerShare);
+  } else if (holding.previousClose !== null && holding.previousClose !== undefined && Number(holding.previousClose) > 0 && price > 0) {
+    dailyChange = price - Number(holding.previousClose);
+  }
+
+  const dailyProfit = dailyChange !== null ? dailyChange * shares : null;
 
   let returnRate = 0;
   if (cost > 0) {
@@ -31,7 +35,6 @@ export function getHoldingMetrics(holding) {
 }
 
 export function getPortfolioMetrics(holdings, settings = {}) {
-  // 嚴格只計算實際持股數大於 0 的標的
   const activeHoldings = (holdings || []).filter((h) => Number(h.shares) > 0);
 
   if (!activeHoldings.length) {
@@ -60,27 +63,27 @@ export function getPortfolioMetrics(holdings, settings = {}) {
     sum.profit += metrics.profit * conversion;
     sum.dividends += dividends * conversion;
 
+    // 解決一票否決漏洞：只要該持倉有計算出日損益，就累加進總覽，不因單一標的缺失而清空整體總覽
     if (metrics.dailyProfit !== null) {
       sum.dailyProfit += metrics.dailyProfit * conversion;
-    } else {
-      sum.dailyProfitComplete = false;
+      sum.hasAnyDailyProfit = true;
     }
     return sum;
-  }, { cost: 0, marketValue: 0, profit: 0, dividends: 0, dailyProfit: 0, dailyProfitComplete: true });
-
-  const { dailyProfitComplete, ...metrics } = totals;
+  }, { cost: 0, marketValue: 0, profit: 0, dividends: 0, dailyProfit: 0, hasAnyDailyProfit: false });
 
   let totalReturnRate = 0;
-  if (metrics.cost > 0) {
-    totalReturnRate = (metrics.profit / metrics.cost) * 100;
-  } else if (metrics.cost === 0 && metrics.profit > 0) {
+  if (totals.cost > 0) {
+    totalReturnRate = (totals.profit / totals.cost) * 100;
+  } else if (totals.cost === 0 && totals.profit > 0) {
     totalReturnRate = Infinity;
   }
 
   return {
-    ...metrics,
+    cost: totals.cost,
+    marketValue: totals.marketValue,
+    profit: totals.profit,
     dividends: totals.dividends,
-    dailyProfit: dailyProfitComplete ? totals.dailyProfit : null,
+    dailyProfit: totals.hasAnyDailyProfit ? totals.dailyProfit : null,
     returnRate: totalReturnRate,
   };
 }
@@ -105,7 +108,6 @@ export function estimateFee(market, quantity, price, settings = {}, type = "buy"
   const configuredMinFee = settings.twMinimum !== undefined && settings.twMinimum !== "" ? Number(settings.twMinimum) : 20;
 
   let commission = Math.max(configuredMinFee, rawCommission);
-  // 台股實務防呆：只要交易金額 > 0，手續費最低計收 1 元
   if (commission === 0 && amount > 0) {
     commission = 1;
   }
@@ -113,7 +115,6 @@ export function estimateFee(market, quantity, price, settings = {}, type = "buy"
   let tax = 0;
   if (type === "sell") {
     const cleanSym = String(symbol).trim().toUpperCase();
-    // 依規定：債券型 ETF (00xxxB) 停徵證券交易稅；一般股票型 ETF (00開頭) 為 0.1%；一般個股為 0.3%
     const isBondEtf = /^00\d+B/i.test(cleanSym);
     const isStockEtf = /^00\d+/i.test(cleanSym);
     const taxRate = isBondEtf ? 0 : (isStockEtf ? 0.001 : 0.003);
