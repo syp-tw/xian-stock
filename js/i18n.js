@@ -120,7 +120,7 @@ const translations = {
   "股票代號 / 名稱": "Ticker / Name",
   "股票代號+名稱 / 股數": "Ticker & Name / Shares",
   "買入日期": "Purchase Date",
-  "平均買入價": "Avg. Cost / Share",
+  "平均買入價": "Avg. Cost",
   "持有股數": "Shares",
   "目前股數": "Current Shares",
   "目前現價": "Current Price",
@@ -135,7 +135,6 @@ const translations = {
   "自訂庫存欄位順序與顯示": "Customize Column Order & Visibility",
   "勾選以顯示欄位，點選箭頭調整欄位在表格中的左右先後順序。": "Check to show columns. Use the arrows to reorder them in the table.",
   "重設預設順序": "Reset to Default",
-  "重設預設": "Reset to Default",
   "完成": "Done",
   "操作": "Actions",
   "你的投資故事，從第一筆開始": "Your investment story starts with the first entry",
@@ -199,111 +198,58 @@ const translations = {
   "儲存位置": "Storage Location",
   "本機（此瀏覽器）": "Local (this browser)",
   "雲端（共用檔案）": "Cloud (shared file)",
-  "目前使用雲端檔案；變更會自動同步。": "Using the cloud file. Changes sync automatically.",
-  "雲端模式尚未連結檔案；請連結檔案或切回本機模式。": "No cloud file is linked. Link a file or switch back to local mode.",
+  "雲端共用檔案（PC File System Access API）": "Cloud Shared File (PC File System Access API)",
+  "Google 試算表雲端同步（全平台 iOS / Android / PC）": "Google Sheets Sync (Cross-platform iOS/Android/PC)",
+  "本機、共用檔案與 Google 試算表分開維護。切換模式前請先於下方完成連線設定。": "Local, PC file, and Google Sheets are managed separately. Configure connection below before switching.",
   "目前使用本機儲存；資料僅保存在此瀏覽器。": "Using local storage. Data is kept in this browser only.",
-  "本機與雲端資料分開保留；只有成功連結並載入或建立共用檔案後，才可切換至雲端模式。雲端模式會自動同步至已啟用的檔案，並在此瀏覽器保留快取。": "Local and cloud data are kept separately. Cloud mode becomes available only after a shared file has been linked and loaded or created. It automatically syncs to the active file and keeps a cache in this browser.",
-  "請先連結或建立共用檔案，再切換至雲端模式。": "Link or create a shared file before switching to cloud mode.",
-  "連結共用檔會更新雲端資料快取；本機資料會保留。是否繼續？": "Linking a shared file updates the cloud data cache. Local data will be preserved. Continue?",
-  "載入共用檔會更新雲端資料；本機資料會保留。是否繼續？": "Loading a shared file updates cloud data. Local data will be preserved. Continue?",
-  "切換至雲端會載入共用檔資料；本機資料將保留，之後的編輯會自動同步至雲端。是否繼續？": "Switching to cloud loads data from the shared file. Local data will be preserved, and future edits will sync automatically. Continue?",
-  "切換至本機會載入此瀏覽器原有資料；雲端資料會保留不變。是否繼續？": "Switching to local loads the data previously stored in this browser. Cloud data will remain unchanged. Continue?",
-  "本機資料未變更，可切換至雲端模式。": "Local data is unchanged. You can switch to cloud mode.",
-  "已連結雲端檔案；本機資料未變更，可切換至雲端模式。": "Cloud file linked. Local data is unchanged; you can switch to cloud mode.",
-  "雲端資料已自動同步。": "Cloud data synced automatically.",
-  "共用檔案已在其他位置變更；為避免覆蓋，請先載入最新版本。": "The shared file changed elsewhere. Load the latest version to avoid overwriting it.",
-  "共用檔案已在其他位置變更；雲端自動同步已暫停，請先載入最新版本。": "The shared file changed elsewhere. Automatic cloud sync is paused; load the latest version first.",
-  "雲端自動同步已暫停；請先載入最新版本或重新授權。": "Automatic cloud sync is paused. Load the latest version or re-authorize access.",
-  "雲端自動同步失敗；請重新授權或切回本機模式。": "Cloud sync failed. Re-authorize access or switch back to local mode.",
-  "雲端模式尚未連結共用檔案；請先連結檔案或切回本機模式。": "No shared file is linked in cloud mode. Link a file or switch back to local mode.",
-  "雲端模式需要重新授權；請按「載入共用檔」同步，或切回本機模式。": "Cloud mode needs permission again. Select “Load Shared File” to sync, or switch back to local mode.",
-  "已切換至雲端；後續變更會自動同步。": "Switched to cloud. Future changes will sync automatically.",
-  "已切換至本機；雲端資料保持不變。": "Switched to local. Cloud data remains unchanged.",
-  "請先切回本機模式，再解除雲端檔案連結。": "Switch to local mode before unlinking the cloud file.",
-  "無法儲存雲端資料的本機快取。": "Unable to save the local cache for cloud data.",
-  "無法儲存儲存位置設定。": "Unable to save the storage location setting.",
-  "無法讀取本機已儲存資料，未切換儲存位置。": "Unable to read local data. The storage location was not changed.",
-  "資料匯出與備份": "Data Export & Backup",
-  "JSON 可完整備份並還原所有投資帳戶、庫存、交易與設定；CSV 適合用試算表查看，不可還原。": "JSON backs up and restores all investment accounts, holdings, transactions, and settings. CSV is for spreadsheets and cannot be restored.",
-  "下載 JSON 備份": "Download JSON Backup",
-  "匯出 CSV": "Export CSV",
-  "從 JSON 還原": "Restore from JSON",
-  "共用雲端檔案": "Shared Cloud File",
-  "可直接按「連結並載入共用檔」選取既有 JSON。若沒有檔案，按「建立／另存共用檔」並選擇資料夾，鮮存股會自動建立含日期時間的新 JSON，不會覆寫既有檔案。檔案成功載入或建立後，即可在上方選擇雲端模式。": "Select “Link & Load Shared File” to choose an existing JSON. To create a new file, select “Create / Save As Shared File” and choose a folder; Xian Stock automatically creates a new JSON with a timestamp in its name and never overwrites an existing file. After the file is linked or created, you can select Cloud above.",
-  "支援 Google Drive for desktop、OneDrive、Dropbox 等已同步到本機的資料夾。雲端模式下編輯會自動同步；這不是即時多人協作，發現外部修改時會先提醒。": "Supports folders synced to this device by Google Drive for desktop, OneDrive, Dropbox, and similar services. Edits sync automatically in cloud mode. This is not real-time collaboration; external changes are flagged first.",
+  "PC 本地共用雲端檔案": "PC Local Shared Cloud File",
+  "支援 Google Drive for desktop、OneDrive、Dropbox 等本機同步資料夾。僅支援 PC 版 Chrome/Edge 瀏覽器。": "Supports Google Drive for desktop, OneDrive, Dropbox sync folders. PC Chrome/Edge only.",
   "檔案位置（同步資料夾內）": "File location (within synced folder)",
   "基於瀏覽器隱私限制，無法顯示完整磁碟路徑；上方顯示所選同步資料夾名稱與檔案相對位置。": "Browser privacy restrictions prevent showing the full disk path. The selected sync folder and relative file path are shown above.",
   "尚未選取同步資料夾。": "No sync folder selected.",
   "選取同步資料夾": "Choose Sync Folder",
   "處理中…": "Working…",
   "正在處理共用檔案操作，請稍候。": "Shared file operation in progress. Please wait.",
-  "已取消選取；同步資料夾位置未變更。": "Selection cancelled. The sync folder location was not changed.",
-  "已選取同步資料夾；請連結或建立共用檔案。": "Sync folder selected. Link or create a shared file.",
-  "同步資料夾已選取，正在建立共用 JSON 檔…": "Sync folder selected. Creating the shared JSON file…",
-  "瀏覽器未授權同步資料夾讀寫權限，尚未建立共用檔。": "The browser did not grant read/write access to the sync folder. No shared file was created.",
-  "」已選取；可直接連結既有檔案，或建立新的共用檔。": "” selected. You can link an existing file or create a new shared file.",
-  "可直接連結既有 JSON；按「建立／另存共用檔」選擇資料夾並自動建立新檔。": "Link an existing JSON, or select “Create / Save As Shared File” to choose a folder and automatically create a new file.",
-  "」已選取；可直接選取或建立共用 JSON 檔。": "” selected. You can select or create a shared JSON file.",
-  "連結既有 JSON 不需先選資料夾；建立新檔時，按鈕會請你選擇資料夾並自動建立。": "You do not need to choose a folder to link an existing JSON. To create a file, select the button to choose a folder and create it automatically.",
-  "已選取同步資料夾：": "Sync folder selected: ",
-  "請先選取同步資料夾。": "Choose a sync folder first.",
-  "同步資料夾路徑已更新。": "Sync folder path updated.",
-  "目前連結的檔案不在所選同步資料夾內；請重新連結共用檔案。": "The linked file is not in the selected sync folder. Please link the shared file again.",
-  "相對路徑無法取得；目前僅顯示檔名。": "The relative path is unavailable. Showing the file name only.",
-  "共用檔案已連結。": "Shared file linked.",
-  "共用檔案已連結並啟用。": "Shared file linked and activated.",
-  "共用檔案尚未啟用；請載入檔案並授予讀寫權限。": "The shared file is not active. Load the file and grant read/write permission.",
-  "請先連結並載入或建立共用檔案，啟用後才能切換至雲端模式。": "Link and load or create a shared file before switching to cloud mode.",
-  "請先連結並載入或建立共用檔案，再切換至雲端模式。": "Link and load or create a shared file before switching to cloud mode.",
-  "尚未選擇共用檔案": "No shared file selected",
-  "同步資料夾「": "Sync folder “",
-  "」已選取；請連結並載入或建立共用檔，完成後即可切換至雲端模式。": "” selected. Link and load or create a shared JSON file to enable cloud mode.",
-  "請先選取同步資料夾，再連結並載入或建立共用檔，完成後即可切換至雲端模式。": "Choose a sync folder, then link and load or create a shared file to enable cloud mode.",
-  "共用檔案已連結；操作時需重新授權。": "Shared file linked. Permission is required when you use it.",
-  "尚未連結共用檔案。": "No shared file is linked.",
-  "此瀏覽器不支援共用檔案存取，仍可使用 JSON／CSV 匯出與 JSON 還原。": "This browser does not support shared-file access. JSON/CSV export and JSON restore are still available.",
   "連結並載入共用檔": "Link & Load Shared File",
   "建立／另存共用檔": "Create / Save As Shared File",
   "載入共用檔": "Load Shared File",
   "儲存至共用檔": "Save to Shared File",
   "解除連結": "Unlink",
-  "無法讀取共用檔案設定，請重新連結檔案。": "Unable to read shared-file settings. Please link the file again.",
-  "載入共用檔將取代這個瀏覽器目前的庫存、交易與設定。是否繼續？": "Loading the shared file will replace the holdings, transactions, and settings in this browser. Continue?",
-  "所選檔案已有內容，建立共用檔會以目前資料覆寫。是否繼續？": "The selected file is not empty. Creating a shared file will overwrite it with the current data. Continue?",
-  "已載入並連結共用檔案。": "Shared file loaded and linked.",
-  "已建立並連結共用檔案。": "Shared file created and linked.",
-  "已從共用檔載入資料。": "Data loaded from shared file.",
-  "共用檔在上次載入後已被修改。若繼續儲存，將以此瀏覽器資料覆寫最新版本。是否仍要覆寫？": "The shared file has changed since it was last loaded. Saving will overwrite the latest version with this browser's data. Continue?",
-  "共用檔再次被修改，為避免覆蓋他人資料，請先重新載入。": "The shared file changed again. Reload it before saving to avoid overwriting someone else's changes.",
-  "已儲存至共用檔案。": "Saved to shared file.",
-  "已解除共用檔案連結；本機資料不受影響。": "Shared file unlinked. Local data is unchanged.",
-  "共用檔案操作失敗。": "Shared-file operation failed.",
-  "備份檔超過 20 MB，無法匯入。": "The backup exceeds 20 MB and cannot be imported.",
-  "還原備份會取代這個瀏覽器目前的庫存、交易與設定。建議先下載目前資料備份。是否繼續？": "Restoring the backup will replace the holdings, transactions, and settings in this browser. Download a backup of current data first. Continue?",
-  "資料已從 JSON 備份還原。": "Data restored from JSON backup.",
-  "無法匯入備份檔。": "Unable to import the backup file.",
-  "JSON 完整備份已下載。": "Full JSON backup downloaded.",
-  "CSV 試算表資料已下載。": "CSV spreadsheet data downloaded.",
-  "檔案不是有效的 JSON 備份。": "The file is not a valid JSON backup.",
-  "備份版本不支援，請更新應用程式後再試。": "This backup version is not supported. Update the app and try again.",
-  "備份資料格式不正確。": "The backup data format is invalid.",
-  "備份資料缺少庫存或交易清單。": "The backup is missing holdings or transactions.",
-  "自訂欄位資料格式不正確。": "The custom-field data format is invalid.",
-  "偏好設定資料格式不正確。": "The preferences data format is invalid.",
-  "期初庫存資料格式不正確。": "The opening-balance data format is invalid.",
-  "備份中有無效的庫存資料。": "The backup contains invalid holding data.",
-  "備份中有無效的庫存數值。": "The backup contains invalid holding values.",
-  "備份中有無效的自訂欄位。": "The backup contains an invalid custom field.",
-  "備份中有無效的交易資料。": "The backup contains invalid transaction data.",
-  "備份中的手續費或匯率設定無效。": "The backup contains invalid fee or exchange-rate settings.",
-  "備份中的手續費或匯率設定超出有效範圍。": "The backup's fee or exchange-rate settings are out of range.",
-  "無法儲存匯入資料至本機，原有資料未變更。": "Unable to save imported data locally. Existing data was not changed.",
-  "無法儲存匯入資料，原有資料未變更。": "Unable to save imported data. Existing data was not changed.",
-  "瀏覽器未授權讀寫共用檔案。": "The browser did not grant read/write access to the shared file.",
-  "無法開啟共用檔案設定。": "Unable to open shared-file settings.",
-  "無法更新共用檔案設定。": "Unable to update shared-file settings.",
-  "無法儲存共用檔案設定。": "Unable to save shared-file settings.",
-  "共用檔案設定更新已取消。": "Updating shared-file settings was cancelled.",
+  "尚未連結共用檔案。": "No shared file is linked.",
+
+  // 🌟 設定彈窗 4 大分頁標籤
+  "雲端與備份": "Cloud & Sync",
+  "即時行情": "Live Quotes",
+  "費率與匯率": "Fees & FX",
+  "一般設定": "General",
+
+  // 🌟 雙層整併欄位標題
+  "目前現價 / 平均買入價": "Price / Avg Cost",
+  "帳面損益 / 報酬率": "Unrealized P/L / Return",
+  "目前市值 / 投資本金": "Market Value / Cost Basis",
+
+  // 🌟 Google 試算表全平台同步
+  "Google 試算表全平台雲端資料庫": "Google Sheets Cloud Database",
+  "複製試算表專用腳本": "Copy Apps Script",
+  "支援跨裝置（手機 iPhone、Android、電腦 PC）雙向即時同步。資料完全保存在您個人的 Google 雲端，安全且免費。": "Supports cross-device (iPhone, Android, PC) real-time 2-way sync. Data is saved in your personal Google Drive safely and for free.",
+  "👉 初次使用？點此查看 3 步驟超簡單設定教學": "👉 First time? View 3-step setup guide",
+  "Apps Script Webhook 網址 (exec 結尾)": "Apps Script Webhook URL (ends with /exec)",
+  "⚡ 測試連線": "⚡ Test Connection",
+  "立即同步至試算表 (Push)": "Sync to Google Sheet (Push)",
+  "從試算表載入 (Pull)": "Load from Google Sheet (Pull)",
+  "Finnhub API Token（選填／由後端 FINNHUB_TOKEN 自動授權）": "Finnhub API Token (Optional / Auto-authorized via Backend)",
+  "後端配置 FINNHUB_TOKEN 環境變數後，系統透過 /api/us-ws-url 端點安全交握獲取連線權限，無須在前端輸入或洩漏 Token。": "When FINNHUB_TOKEN is configured in backend, the system safely handshakes via /api/us-ws-url. No token needed on frontend.",
+
+  // 🌟 多格式匯出與匯入
+  "資料多格式匯出與匯入": "Multi-Format Export & Import",
+  "支援雙向匯出與匯入：JSON / JS（全量無損還原）、CSV（通用格式）與 Excel XLSX / XLS（多分頁活頁簿）。": "Supports 2-way export & import: JSON/JS (lossless restore), CSV (universal), and Excel XLSX/XLS (multi-sheet workbook).",
+  "下載 JSON": "Download JSON",
+  "下載 JS 檔": "Download JS",
+  "匯出 CSV": "Export CSV",
+  "匯出 Excel (XLSX)": "Export Excel (XLSX)",
+  "匯入檔案 (JSON/JS/CSV/Excel)": "Import File (JSON/JS/CSV/Excel)",
+
+  // 🌟 手續費與匯率
   "台股手續費": "Taiwan Stock Fees",
   "券商牌告費率 (%)": "Broker Commission Rate (%)",
   "折扣比例 (%)": "Discount (%)",
@@ -313,41 +259,23 @@ const translations = {
   "每股手續費（USD）": "Fee per Share (USD)",
   "單筆最低手續費（USD）": "Minimum Fee per Trade (USD)",
   "美元兌新台幣匯率": "USD to TWD Exchange Rate",
-  "美股預設每股 USD 0.005；可依券商方案調整。匯率用於資產總覽換算。": "The default U.S. stock fee is USD 0.005 per share. Adjust it to match your broker. The exchange rate is used for portfolio totals.",
-  "加拿大股手續費與換匯": "Canadian Stock Fees & Exchange Rate",
+  "加拿大股手續費與換匯": "Canadian Stock Fees & FX",
   "每股手續費（CAD）": "Fee per Share (CAD)",
   "單筆最低手續費（CAD）": "Minimum Fee per Trade (CAD)",
   "加幣兌新台幣匯率": "CAD to TWD Exchange Rate",
-  "可自行設定加拿大券商手續費與 CAD/TWD 匯率；匯率用於資產總覽換算。": "Set Canadian broker fees and the CAD/TWD exchange rate used to convert portfolio totals.",
   "儲存設定": "Save Settings",
   "編輯": "Edit",
+  "改名": "Rename",
   "刪除": "Delete",
   "交易": "Trade",
+  "上移": "Move Up",
+  "下移": "Move Down",
   "台": "TW",
   "股": "shares",
   "檔": "holdings",
   "筆": "entries",
-  "上次更新：": "Last updated: ",
-  "交易紀錄已新增。": " transaction recorded.",
-  "已刪除。": " deleted.",
   "庫存資料已更新。": "Holding updated.",
-  "已新增「": "Added \"",
-  "」欄位，可在編輯持倉時填寫。": "\" field. Edit a holding to add its value.",
-  "欄位已刪除。": " field deleted.",
   "手續費與匯率設定已儲存。": "Fee and exchange-rate settings saved.",
-  "目前沒有庫存可更新報價。": "There are no holdings to refresh.",
-  "更新於 ": "Updated at ",
-  "已更新 ": "Updated ",
-  " 檔股票報價。": " stock quotes.",
-  " / ": " / ",
-  " 檔報價更新成功，失敗項目請稍後重試。": " quotes updated. Please retry failed quotes later.",
-  "請先輸入股票代號或名稱。": "Enter a ticker or company name first.",
-  "找不到符合的台股或美股，請再試試看代號。": "No matching Taiwan or U.S. stocks found. Try a ticker instead.",
-  "找不到股票，請確認代號或輸入英文名稱。": "No matching stocks found. Check the ticker or try the English company name.",
-  "正在搜尋台股與美股…": "Searching Taiwan and U.S. stocks…",
-  "報價搜尋暫時無法使用，請稍後再試或手動輸入股票代號。": "Quote search is temporarily unavailable. Try again later or enter a ticker manually.",
-  "報價幣別與預期市場不同，請確認股票代號。": "The quote currency does not match the selected market. Please check the ticker.",
-  " 請手動輸入價格。": " Enter the price manually.",
   "請確認各欄位皆為有效的非負數值。": "Enter a valid non-negative number in each field.",
   "台股折扣比例不可大於 100%。": "The Taiwan stock discount cannot exceed 100%.",
   "請輸入股票代號。": "Enter a stock ticker.",
@@ -362,10 +290,7 @@ const translations = {
   "此帳戶內該股號已有其他持倉，請編輯既有持倉以避免重複資料。": "A holding for this ticker already exists in this account. Edit the existing holding to avoid duplicates.",
   "已經有同名的自訂欄位。": "A custom field with this name already exists.",
   "讀取已儲存資料時發生問題，目前顯示空白資料。": "There was a problem reading saved data. The current view is empty.",
-  "新增": "Add",
   "確認交易": "Record Transaction",
-  "中文": "Chinese",
-  "美語": "English (U.S.)",
 };
 
 const englishToChinese = new Map(Object.entries(translations).map(([chinese, english]) => [english, chinese]));
@@ -373,17 +298,6 @@ const englishToChinese = new Map(Object.entries(translations).map(([chinese, eng
 export function translateText(value, language = "zh-TW") {
   if (language !== "en-US") return englishToChinese.get(value) || value;
   if (translations[value]) return translations[value];
-  const folderStatusSuffixes = [
-    "」已選取；可直接連結既有檔案，或建立新的共用檔。",
-    "」已選取；可直接選取或建立共用 JSON 檔。",
-  ];
-  if (value.startsWith("同步資料夾「")) {
-    const suffix = folderStatusSuffixes.find((candidate) => value.endsWith(candidate));
-    if (suffix) {
-      const folderName = value.slice("同步資料夾「".length, -suffix.length);
-      return `${translations["同步資料夾「"]}${folderName}${translations[suffix]}`;
-    }
-  }
 
   const holdingCount = value.match(/^(\d+) 檔$/);
   if (holdingCount) return `${holdingCount[1]} holdings`;
@@ -397,26 +311,8 @@ export function translateText(value, language = "zh-TW") {
   if (customFieldRemoved) return `"${customFieldRemoved[1]}" field deleted.`;
   const quoteUpdated = value.match(/^(\d+) 檔股票報價已更新。$/);
   if (quoteUpdated) return `Updated quotes for ${quoteUpdated[1]} stocks.`;
-  const quoteLoaded = value.match(/^(.+) 已帶入報價 (.+)。$/);
-  if (quoteLoaded) return `Loaded quote for ${quoteLoaded[1]}: ${quoteLoaded[2]}.`;
-  const renderApiError = value.match(/^Render 報價 API 回應錯誤（(\d+)）。$/);
-  if (renderApiError) return `Render Quote API returned an error (${renderApiError[1]}).`;
   const holdingAdded = value.match(/^新增「(.+)」交易$/);
   if (holdingAdded) return `New transaction for ${holdingAdded[1]}`;
-  const holdingDeleted = value.match(/^確定刪除 (.+)（(.+)）及其持倉資料？$/);
-  if (holdingDeleted) return `Delete ${holdingDeleted[1]} (${holdingDeleted[2]}) and its holding data?`;
-  const fieldDeleted = value.match(/^確定刪除「(.+)」欄位及所有該欄位資料？$/);
-  if (fieldDeleted) return `Delete the "${fieldDeleted[1]}" field and all its data?`;
-  const transactionDeleted = value.match(/^確定刪除 (.+)（(.+)）交易明細？$/);
-  if (transactionDeleted) return `Delete the ${transactionDeleted[1]} transaction dated ${transactionDeleted[2]}?`;
-  const holdingDetailsLink = value.match(/^查看 (.+) 交易明細$/);
-  if (holdingDetailsLink) return `View ${holdingDetailsLink[1]} transaction history`;
-  const transactionTitle = value.match(/^編輯 (.+)交易$/);
-  if (transactionTitle) return `Edit ${transactionTitle[1]} Transaction`;
-  const fieldPlaceholder = value.match(/^輸入(.+)$/);
-  if (fieldPlaceholder) return `Enter ${fieldPlaceholder[1]}`;
-  const feeEstimate = value.match(/^依(台股|美股|加拿大股)手續費設定預估，可自行修改。$/);
-  if (feeEstimate) return `Estimated using ${feeEstimate[1] === "台股" ? "Taiwan" : feeEstimate[1] === "加拿大股" ? "Canadian" : "U.S."} stock fee settings. You can adjust it.`;
   const splitPreview = value.match(/^持股數將乘以 (.+)$/);
   if (splitPreview) return `Shares will be multiplied by ${splitPreview[1]}`;
   const removedHolding = value.match(/^(.+) 已刪除。$/);
@@ -427,16 +323,16 @@ export function translateText(value, language = "zh-TW") {
   if (customFieldAdded) return `Added "${customFieldAdded[1]}" field. Edit a holding to add its value.`;
   const customFieldTitle = value.match(/^刪除「(.+)」欄位$/);
   if (customFieldTitle) return `Delete "${customFieldTitle[1]}" field`;
-  const dateTitle = value.match(/^上次更新：(.+)$/);
-  if (dateTitle) return `Last updated: ${dateTitle[1]}`;
-  const quoteFailure = value.match(/^(.+) 可手動輸入價格。$/);
-  if (quoteFailure) return `${translateText(quoteFailure[1], language)} Enter the price manually.`;
-  const amount = value.match(/^(\d+) \/ (\d+) 檔報價更新成功，失敗項目請稍後重試。$/);
-  if (amount) return `${amount[1]} of ${amount[2]} quotes updated. Please retry failed quotes later.`;
   const accountAdded = value.match(/^已新增「(.+)」帳戶。$/);
   if (accountAdded) return `Account "${accountAdded[1]}" added.`;
   const accountDeleted = value.match(/^已刪除「(.+)」帳戶。$/);
   if (accountDeleted) return `Account "${accountDeleted[1]}" deleted.`;
+  const accountRenamed = value.match(/^帳戶已改名為「(.+)」。$/);
+  if (accountRenamed) return `Account renamed to "${accountRenamed[1]}".`;
+  const streamSwitched = value.match(/^已切換為美股 (.+)$/);
+  if (streamSwitched) return `Switched to US stock ${streamSwitched[1]}.`;
+  const importSuccess = value.match(/^已成功由 (.+) 還原\/匯入資料！$/);
+  if (importSuccess) return `Successfully imported data from ${importSuccess[1]}!`;
   const confirmDeleteAccount = value.match(/^確定刪除「(.+)」帳戶？$/);
   if (confirmDeleteAccount) return `Are you sure you want to delete account "${confirmDeleteAccount[1]}"?`;
 

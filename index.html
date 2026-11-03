@@ -1,10 +1,6 @@
 <!doctype html>
 <html lang="zh-Hant">
   <head>
-    <!-- iOS 全螢幕 App 與圖示設定 -->
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="鮮存股">
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f5f7f6" />
@@ -371,7 +367,7 @@
       </form>
     </dialog>
 
-    <!-- 偏好設定彈窗 -->
+    <!-- 偏好設定彈窗（🌟 4 大分類分頁架構） -->
     <dialog class="app-dialog compact-dialog settings-dialog" id="settings-dialog">
       <form id="settings-form">
         <input type="hidden" name="overviewCurrency" value="TWD" />
@@ -380,149 +376,172 @@
           <button type="button" class="dialog-close" data-close="settings-dialog" aria-label="關閉">×</button>
         </div>
 
-        <div class="settings-group">
-          <h3>顯示語系</h3>
-          <div class="form-field">
-            <label for="language-setting">介面語言</label>
-            <select id="language-setting" name="language">
-              <option value="zh-TW">中文版（繁體中文）</option>
-              <option value="en-US">美語版（English）</option>
-            </select>
-          </div>
-          <p class="field-help">語系設定會自動儲存，並套用至整個投資記錄介面。</p>
+        <!-- 分頁切換選單導覽 -->
+        <nav class="settings-tabs" role="tablist">
+          <button type="button" class="settings-tab-btn active" data-settings-tab="cloud">☁️ 雲端與備份</button>
+          <button type="button" class="settings-tab-btn" data-settings-tab="quotes">⚡ 即時行情</button>
+          <button type="button" class="settings-tab-btn" data-settings-tab="fees">💰 費率與匯率</button>
+          <button type="button" class="settings-tab-btn" data-settings-tab="general">🌐 一般設定</button>
+        </nav>
+
+        <!-- Tab 1: ☁️ 雲端與備份 -->
+        <div class="settings-tab-panel active" data-settings-panel="cloud">
+          <section class="settings-group" aria-labelledby="storage-mode-heading">
+            <h3 id="storage-mode-heading">資料儲存位置</h3>
+            <div class="form-field">
+              <label for="storage-mode">儲存位置</label>
+              <select id="storage-mode">
+                <option value="local">本機（此瀏覽器）</option>
+                <option value="google-sheet">Google 試算表雲端同步（全平台 iOS / Android / PC）</option>
+                <option value="cloud">雲端共用檔案（PC File System Access API）</option>
+              </select>
+            </div>
+            <p class="field-help" id="storage-mode-status" role="status">目前使用本機儲存；資料僅保存在此瀏覽器。</p>
+            <p class="field-help">本機、Google 試算表與共用檔案分開維護。切換模式前請先於下方完成連線設定。</p>
+          </section>
+
+          <!-- Google 試算表全平台同步設定 -->
+          <section class="settings-group" aria-labelledby="google-sheet-heading">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <h3 id="google-sheet-heading" style="margin: 0;">Google 試算表全平台雲端資料庫</h3>
+              <button type="button" class="button button-outline button-small" id="copy-gas-script-btn" style="font-size: 11px;">
+                📋 複製試算表專用腳本
+              </button>
+            </div>
+            <p class="field-help">支援跨裝置（手機 iPhone、Android、電腦 PC）雙向即時同步。資料完全保存在您個人的 Google 雲端，安全且免費。</p>
+
+            <details style="margin: 8px 0 12px; padding: 8px 10px; background: #f2f6f3; border-radius: 6px; font-size: 11px; color: #43584c;">
+              <summary style="cursor: pointer; font-weight: 600; color: #28715c;">👉 初次使用？點此查看 3 步驟超簡單設定教學</summary>
+              <ol style="margin: 8px 0 0; padding-left: 18px; line-height: 1.7;">
+                <li>點擊右上角 <strong>「📋 複製試算表專用腳本」</strong>。</li>
+                <li>在電腦開啟個人 <a href="https://sheets.new" target="_blank" rel="noopener" style="color: #28715c; font-weight: 600;">Google 空白試算表</a>，點選上方<strong>「擴充功能」->「Apps Script」</strong>。</li>
+                <li>清空原本內容並<strong>貼上剛才複製的代碼</strong>，點右上角<strong>「部署」->「新增部署」</strong>（齒輪選<strong>網頁應用程式</strong>，誰可以存取務必選<strong>「所有人」</strong>），最後把產生的網址複製貼在下方即可！</li>
+              </ol>
+            </details>
+
+            <div class="form-field">
+              <label for="google-sheet-webhook">Apps Script Webhook 網址 (exec 結尾)</label>
+              <input id="google-sheet-webhook" name="googleSheetWebhook" type="url" placeholder="https://script.google.com/macros/s/.../exec" />
+            </div>
+            <div class="settings-actions">
+              <button class="button button-outline button-small" id="google-sheet-test" type="button">⚡ 測試連線</button>
+              <button class="button button-outline button-small" id="google-sheet-push" type="button">立即同步至試算表 (Push)</button>
+              <button class="button button-outline button-small" id="google-sheet-pull" type="button">從試算表載入 (Pull)</button>
+            </div>
+          </section>
+
+          <!-- 多格式匯出與匯入 -->
+          <section class="settings-group" aria-labelledby="backup-heading">
+            <h3 id="backup-heading">資料多格式匯出與匯入</h3>
+            <p class="field-help">支援雙向匯出與匯入：JSON / JS（全量無損還原）、CSV（通用格式）與 Excel XLSX / XLS（多分頁活頁簿）。</p>
+            <div class="settings-actions">
+              <button class="button button-outline button-small" id="export-backup-json" type="button">下載 JSON</button>
+              <button class="button button-outline button-small" id="export-backup-js" type="button">下載 JS 檔</button>
+              <button class="button button-outline button-small" id="export-backup-csv" type="button">匯出 CSV</button>
+              <button class="button button-outline button-small" id="export-backup-xls" type="button">匯出 Excel (XLSX)</button>
+              <button class="button button-primary button-small" id="import-backup-btn" type="button">匯入檔案 (JSON/JS/CSV/Excel)</button>
+              <input id="import-file-unified" type="file" accept=".json,.js,.csv,.xlsx,.xls,application/json,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" hidden />
+            </div>
+          </section>
+
+          <!-- PC 本地共用雲端檔案 -->
+          <section class="settings-group" aria-labelledby="shared-file-heading">
+            <h3 id="shared-file-heading">PC 本地共用雲端檔案</h3>
+            <p class="field-help">支援 Google Drive for desktop、OneDrive、Dropbox 等本機同步資料夾。僅支援 PC 版 Chrome/Edge 瀏覽器。</p>
+            <div class="shared-file-location">
+              <span>檔案位置（同步資料夾內）</span>
+              <code id="shared-file-path">尚未選取同步資料夾。</code>
+            </div>
+            <p class="shared-file-status" id="shared-file-status" role="status">尚未連結共用檔案。</p>
+            <div class="settings-actions">
+              <button class="button button-outline button-small" id="shared-folder-select" type="button">選取同步資料夾</button>
+              <button class="button button-outline button-small" id="shared-file-open" type="button">連結並載入共用檔</button>
+              <button class="button button-outline button-small" id="shared-file-create" type="button">建立／另存共用檔</button>
+              <button class="button button-outline button-small" id="shared-file-load" type="button" disabled>載入共用檔</button>
+              <button class="button button-primary button-small" id="shared-file-save" type="button" disabled>儲存至共用檔</button>
+              <button class="button button-outline button-small" id="shared-file-disconnect" type="button" disabled>解除連結</button>
+            </div>
+          </section>
         </div>
 
-        <section class="settings-group" aria-labelledby="storage-mode-heading">
-          <h3 id="storage-mode-heading">資料儲存位置</h3>
-          <div class="form-field">
-            <label for="storage-mode">儲存位置</label>
-            <select id="storage-mode">
-              <option value="local">本機（此瀏覽器）</option>
-              <option value="cloud">雲端共用檔案（PC File System Access API）</option>
-              <option value="google-sheet">Google 試算表雲端同步（全平台 iOS / Android / PC）</option>
-            </select>
-          </div>
-          <p class="field-help" id="storage-mode-status" role="status">目前使用本機儲存；資料僅保存在此瀏覽器。</p>
-          <p class="field-help">本機、共用檔案與 Google 試算表分開維護。切換模式前請先於下方完成連線設定。</p>
-        </section>
-
-        <!-- Google 試算表全平台同步設定（含一鍵複製腳本與 3 步驟教學） -->
-        <section class="settings-group" aria-labelledby="google-sheet-heading">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <h3 id="google-sheet-heading" style="margin: 0;">Google 試算表全平台雲端資料庫</h3>
-            <button type="button" class="button button-outline button-small" id="copy-gas-script-btn" style="font-size: 11px;">
-              📋 複製試算表專用腳本
-            </button>
-          </div>
-          <p class="field-help">支援跨裝置（手機 iPhone、Android、電腦 PC）雙向即時同步。資料完全保存在您個人的 Google 雲端，安全且免費。</p>
-
-          <!-- 內建新手摺疊教學 -->
-          <details style="margin: 8px 0 12px; padding: 8px 10px; background: #f2f6f3; border-radius: 6px; font-size: 11px; color: #43584c;">
-            <summary style="cursor: pointer; font-weight: 600; color: #28715c;">👉 初次使用？點此查看 3 步驟超簡單設定教學</summary>
-            <ol style="margin: 8px 0 0; padding-left: 18px; line-height: 1.7;">
-              <li>點擊右上角 <strong>「📋 複製試算表專用腳本」</strong>。</li>
-              <li>在電腦開啟個人 <a href="https://sheets.new" target="_blank" rel="noopener" style="color: #28715c; font-weight: 600;">Google 空白試算表</a>，點選上方<strong>「擴充功能」->「Apps Script」</strong>。</li>
-              <li>清空原本內容並<strong>貼上剛才複製的代碼</strong>，點右上角<strong>「部署」->「新增部署」</strong>（齒輪選<strong>網頁應用程式</strong>，誰可以存取務必選<strong>「所有人」</strong>），最後把產生的網址複製貼在下方即可！</li>
-            </ol>
-          </details>
-
-          <div class="form-field">
-            <label for="google-sheet-webhook">Apps Script Webhook 網址 (exec 結尾)</label>
-            <input id="google-sheet-webhook" name="googleSheetWebhook" type="url" placeholder="https://script.google.com/macros/s/.../exec" />
-          </div>
-          <div class="settings-actions">
-            <button class="button button-outline button-small" id="google-sheet-test" type="button">⚡ 測試連線</button>
-            <button class="button button-outline button-small" id="google-sheet-push" type="button">立即同步至試算表 (Push)</button>
-            <button class="button button-outline button-small" id="google-sheet-pull" type="button">從試算表載入 (Pull)</button>
-          </div>
-        </section>
-
-        <!-- 多格式匯出與匯入 (JSON / JS / CSV / XLS) -->
-        <section class="settings-group" aria-labelledby="backup-heading">
-          <h3 id="backup-heading">資料多格式匯出與匯入</h3>
-          <p class="field-help">支援雙向匯出與匯入：JSON / JS（全量無損還原）、CSV（通用格式）與 Excel XLSX / XLS（多分頁活頁簿）。</p>
-          <div class="settings-actions">
-            <button class="button button-outline button-small" id="export-backup-json" type="button">下載 JSON</button>
-            <button class="button button-outline button-small" id="export-backup-js" type="button">下載 JS 檔</button>
-            <button class="button button-outline button-small" id="export-backup-csv" type="button">匯出 CSV</button>
-            <button class="button button-outline button-small" id="export-backup-xls" type="button">匯出 Excel (XLSX)</button>
-            <button class="button button-primary button-small" id="import-backup-btn" type="button">匯入檔案 (JSON/JS/CSV/Excel)</button>
-            <input id="import-file-unified" type="file" accept=".json,.js,.csv,.xlsx,.xls,application/json,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" hidden />
-          </div>
-        </section>
-
-        <!-- PC 共用雲端檔案 (File System Access) -->
-        <section class="settings-group" aria-labelledby="shared-file-heading">
-          <h3 id="shared-file-heading">PC 本地共用雲端檔案</h3>
-          <p class="field-help">支援 Google Drive for desktop、OneDrive、Dropbox 等本機同步資料夾。僅支援 PC 版 Chrome/Edge 瀏覽器。</p>
-          <div class="shared-file-location">
-            <span>檔案位置（同步資料夾內）</span>
-            <code id="shared-file-path">尚未選取同步資料夾。</code>
-          </div>
-          <p class="shared-file-status" id="shared-file-status" role="status">尚未連結共用檔案。</p>
-          <div class="settings-actions">
-            <button class="button button-outline button-small" id="shared-folder-select" type="button">選取同步資料夾</button>
-            <button class="button button-outline button-small" id="shared-file-open" type="button">連結並載入共用檔</button>
-            <button class="button button-outline button-small" id="shared-file-create" type="button">建立／另存共用檔</button>
-            <button class="button button-outline button-small" id="shared-file-load" type="button" disabled>載入共用檔</button>
-            <button class="button button-primary button-small" id="shared-file-save" type="button" disabled>儲存至共用檔</button>
-            <button class="button button-outline button-small" id="shared-file-disconnect" type="button" disabled>解除連結</button>
-          </div>
-        </section>
-
-        <!-- 即時報價 API 與美股 WebSocket 設定 -->
-        <section class="settings-group" aria-labelledby="quote-provider-heading">
-          <h3 id="quote-provider-heading">即時報價 API</h3>
-          <div class="form-field">
-            <label for="quote-provider">報價來源</label>
-            <select id="quote-provider" name="quoteProvider">
-              <option value="render-api">Render API（台股／美股代號，加股自動切換）</option>
-              <option value="yahoo">Yahoo Finance（支援台股／美股／加股，含名稱搜尋）</option>
-            </select>
-          </div>
-          <div class="form-field">
-            <label for="quote-api-url">Render 報價 API 網址</label>
-            <input id="quote-api-url" name="quoteApiUrl" type="url" autocomplete="url" required />
-          </div>
-          <div class="form-field">
-            <label for="finnhub-token">Finnhub API Token（選填／由後端 FINNHUB_TOKEN 自動授權）</label>
-            <input id="finnhub-token" name="finnhubToken" type="password" autocomplete="off" placeholder="留白即可：系統將自動透過後端安全交握" />
-            <small class="field-help">後端配置 <code>FINNHUB_TOKEN</code> 環境變數後，系統透過 <code>/api/us-ws-url</code> 端點安全交握獲取連線權限，無須在前端輸入或洩漏 Token。</small>
-          </div>
-        </section>
-
-        <div class="settings-group">
-          <h3>台股手續費</h3>
-          <div class="form-grid">
-            <div class="form-field"><label for="tw-rate">券商牌告費率 (%)</label><input id="tw-rate" name="twRate" type="number" min="0" step="any" required /></div>
-            <div class="form-field"><label for="tw-discount">折扣比例 (%)</label><input id="tw-discount" name="twDiscount" type="number" min="0" max="100" step="any" required /></div>
-            <div class="form-field"><label for="tw-minimum">最低手續費（NT$）</label><input id="tw-minimum" name="twMinimum" type="number" min="0" step="any" required /></div>
-          </div>
-          <p class="field-help">預設牌告費率 0.1425%，預設實收折扣為牌告的 28%（俗稱 2.8 折）。實際費用請依券商為準。</p>
+        <!-- Tab 2: ⚡ 即時行情 -->
+        <div class="settings-tab-panel" data-settings-panel="quotes">
+          <section class="settings-group" aria-labelledby="quote-provider-heading">
+            <h3 id="quote-provider-heading">即時報價 API</h3>
+            <div class="form-field">
+              <label for="quote-provider">報價來源</label>
+              <select id="quote-provider" name="quoteProvider">
+                <option value="render-api">Render API（台股／美股代號，加股自動切換）</option>
+                <option value="yahoo">Yahoo Finance（支援台股／美股／加股，含名稱搜尋）</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label for="quote-api-url">Render 報價 API 網址</label>
+              <input id="quote-api-url" name="quoteApiUrl" type="url" autocomplete="url" required />
+            </div>
+            <div class="form-field">
+              <label for="finnhub-token">Finnhub API Token（選填／由後端 FINNHUB_TOKEN 自動授權）</label>
+              <input id="finnhub-token" name="finnhubToken" type="password" autocomplete="off" placeholder="留白即可：系統將自動透過後端安全交握" />
+              <small class="field-help">後端配置 <code>FINNHUB_TOKEN</code> 環境變數後，系統透過 <code>/api/us-ws-url</code> 端點安全交握獲取連線權限，無須在前端輸入或洩漏 Token。</small>
+            </div>
+            <p class="field-help">
+              Yahoo Finance 支援台股、美股與加拿大股完整查價及中英文名稱搜尋。Render API 為專屬自建服務；若在 Render 模式下查詢加拿大股，系統會智慧自動切換至 Yahoo 查詢，無須手動切換設定。
+            </p>
+          </section>
         </div>
 
-        <div class="settings-group">
-          <h3>美股手續費與換匯</h3>
-          <div class="form-grid">
-            <div class="form-field"><label for="us-per-share">每股手續費（USD）</label><input id="us-per-share" name="usPerShare" type="number" min="0" step="any" required /></div>
-            <div class="form-field"><label for="us-minimum">單筆最低手續費（USD）</label><input id="us-minimum" name="usMinimum" type="number" min="0" step="any" required /></div>
-            <div class="form-field"><label for="fx-rate">美元兌新台幣匯率</label><input id="fx-rate" name="fxRate" type="number" min="0.000001" step="any" required /></div>
+        <!-- Tab 3: 💰 費率與匯率 -->
+        <div class="settings-tab-panel" data-settings-panel="fees">
+          <div class="settings-group">
+            <h3>台股手續費</h3>
+            <div class="form-grid">
+              <div class="form-field"><label for="tw-rate">券商牌告費率 (%)</label><input id="tw-rate" name="twRate" type="number" min="0" step="any" required /></div>
+              <div class="form-field"><label for="tw-discount">折扣比例 (%)</label><input id="tw-discount" name="twDiscount" type="number" min="0" max="100" step="any" required /></div>
+              <div class="form-field"><label for="tw-minimum">最低手續費（NT$）</label><input id="tw-minimum" name="twMinimum" type="number" min="0" step="any" required /></div>
+            </div>
+            <p class="field-help">預設牌告費率 0.1425%，預設實收折扣為牌告的 28%（俗稱 2.8 折）。實際費用請依券商為準。</p>
+          </div>
+
+          <div class="settings-group">
+            <h3>美股手續費與換匯</h3>
+            <div class="form-grid">
+              <div class="form-field"><label for="us-per-share">每股手續費（USD）</label><input id="us-per-share" name="usPerShare" type="number" min="0" step="any" required /></div>
+              <div class="form-field"><label for="us-minimum">單筆最低手續費（USD）</label><input id="us-minimum" name="usMinimum" type="number" min="0" step="any" required /></div>
+              <div class="form-field"><label for="fx-rate">美元兌新台幣匯率</label><input id="fx-rate" name="fxRate" type="number" min="0.000001" step="any" required /></div>
+            </div>
+            <p class="field-help">美股預設每股 USD 0.005；可依券商方案調整。匯率用於資產總覽換算。</p>
+          </div>
+
+          <div class="settings-group">
+            <h3>加拿大股手續費與換匯</h3>
+            <div class="form-grid">
+              <div class="form-field"><label for="ca-per-share">每股手續費（CAD）</label><input id="ca-per-share" name="caPerShare" type="number" min="0" step="any" required /></div>
+              <div class="form-field"><label for="ca-minimum">單筆最低手續費（CAD）</label><input id="ca-minimum" name="caMinimum" type="number" min="0" step="any" required /></div>
+              <div class="form-field"><label for="cad-fx-rate">加幣兌新台幣匯率</label><input id="cad-fx-rate" name="cadFxRate" type="number" min="0.000001" step="any" required /></div>
+            </div>
+            <p class="field-help">可自行設定加拿大券商手續費與 CAD/TWD 匯率；匯率用於資產總覽換算。</p>
           </div>
         </div>
 
-        <div class="settings-group">
-          <h3>加拿大股手續費與換匯</h3>
-          <div class="form-grid">
-            <div class="form-field"><label for="ca-per-share">每股手續費（CAD）</label><input id="ca-per-share" name="caPerShare" type="number" min="0" step="any" required /></div>
-            <div class="form-field"><label for="ca-minimum">單筆最低手續費（CAD）</label><input id="ca-minimum" name="caMinimum" type="number" min="0" step="any" required /></div>
-            <div class="form-field"><label for="cad-fx-rate">加幣兌新台幣匯率</label><input id="cad-fx-rate" name="cadFxRate" type="number" min="0.000001" step="any" required /></div>
+        <!-- Tab 4: 🌐 一般設定 -->
+        <div class="settings-tab-panel" data-settings-panel="general">
+          <div class="settings-group">
+            <h3>顯示語系</h3>
+            <div class="form-field">
+              <label for="language-setting">介面語言</label>
+              <select id="language-setting" name="language">
+                <option value="zh-TW">中文版（繁體中文）</option>
+                <option value="en-US">美語版（English）</option>
+              </select>
+            </div>
+            <p class="field-help">語系設定會自動儲存，並套用至整個投資記錄介面。</p>
           </div>
         </div>
 
         <p class="dialog-error" id="settings-error" role="alert"></p>
         <div class="dialog-actions">
           <button class="button button-outline" type="button" data-close="settings-dialog">取消</button>
-          <button class="button button-primary" type="submit">儲存設定</button>
+          <button class="button button-primary" type="submit" id="save-settings">儲存設定</button>
         </div>
       </form>
     </dialog>

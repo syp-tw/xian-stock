@@ -1,4 +1,4 @@
-// js/app.js - 前端主控調度模組（整合雙層整併欄位渲染、自訂欄位順序修復、多格式匯入匯出、Google 試算表全平台同步與美股串流）
+// js/app.js - 前端主控調度模組（整合設定分頁排版、雙層整併欄位渲染、多格式匯入匯出、Google 試算表全平台同步與美股串流）
 import { getHoldingMetrics, getPortfolioMetrics } from "./calculations.js";
 import { 
   parseBackup, serializeBackup, serializeJsBackup, 
@@ -24,7 +24,7 @@ import { MarketPoller } from "./market-poller.js";
 let storageMode = loadStorageMode();
 const state = loadState(storageMode);
 
-// 1. 自動升級舊版 columnOrder 為全新雙層整併欄位（目前現價/均價、損益/報酬率、市值/本金）
+// 1. 自動升級舊版 columnOrder 為全新雙層整併欄位
 const legacyCols = ["currentPrice", "averageCost", "profit", "returnRate", "marketValue", "cost"];
 if (Array.isArray(state.settings.columnOrder) && state.settings.columnOrder.some((c) => legacyCols.includes(c))) {
   state.settings.columnOrder = [...DEFAULT_SETTINGS.columnOrder];
@@ -364,7 +364,6 @@ function getSortedHoldings(holdings) {
       valA = metricsA.returnRate;
       valB = metricsB.returnRate;
     } else {
-      // 自訂欄位排序（支援數值與字串自動判別）
       valA = a.custom?.[key] ?? "";
       valB = b.custom?.[key] ?? "";
       const numA = Number(valA);
@@ -399,7 +398,6 @@ function formatReturnRate(rate) {
   return `${rate >= 0 ? "+" : ""}${rate.toFixed(2)}%`;
 }
 
-// 🌟 表頭渲染（支援包含「 / 」的雙層表頭排版）
 function renderTableHeaders() {
   const headerRow = elements.headerRow;
   if (!headerRow) return;
@@ -467,7 +465,6 @@ function renderTableHeaders() {
   }
 }
 
-// 🌟 庫存列渲染（支援雙層整併式儲存格）
 function makeHoldingRow(holding, activeColumns) {
   const row = document.createElement("tr");
   row.className = "holding-row";
@@ -732,7 +729,7 @@ function render() {
   applyTranslations(state.settings.language);
 }
 
-// ----------------- 自訂欄位順序彈窗（🌟 修復 combined 未定義之關鍵錯誤） -----------------
+// ----------------- 自訂欄位順序彈窗 -----------------
 function openColumnManager() {
   const dialog = document.querySelector("#column-manager-dialog");
   if (!dialog) return;
@@ -757,7 +754,6 @@ function openColumnManager() {
     for (const baseCol of BASE_COLUMNS) {
       if (!orderedCols.some((c) => c.id === baseCol.id)) {
         const defIdx = DEFAULT_SETTINGS.columnOrder.indexOf(baseCol.id);
-        // 🌟 正確使用 orderedCols.length，徹底消滅 ReferenceError
         const insertAt = defIdx >= 0 && defIdx < orderedCols.length ? defIdx : Math.max(0, orderedCols.length - 1);
         orderedCols.splice(insertAt, 0, baseCol);
       }
@@ -790,7 +786,6 @@ function openColumnManager() {
       const actions = document.createElement("div");
       actions.className = "column-item-actions";
 
-      // 上移按鈕（↑）
       const upBtn = document.createElement("button");
       upBtn.type = "button";
       upBtn.className = "move-btn";
@@ -807,7 +802,6 @@ function openColumnManager() {
         render();
       });
 
-      // 下移按鈕（↓）
       const downBtn = document.createElement("button");
       downBtn.type = "button";
       downBtn.className = "move-btn";
@@ -1089,6 +1083,7 @@ function deleteCustomField(field) {
   toast(`「${field.name}」欄位已刪除。`);
 }
 
+// ----------------- 設定彈窗（🌟 開啟時重設為預設第一分頁） -----------------
 function openSettings() {
   const form = document.querySelector("#settings-form");
   if (!form) return;
@@ -1099,9 +1094,30 @@ function openSettings() {
   if (storageSelect) storageSelect.value = storageMode;
   const settingsErr = document.querySelector("#settings-error");
   if (settingsErr) settingsErr.textContent = "";
+
+  // 預設切換至第一分頁（雲端與備份）
+  const firstTab = document.querySelector(".settings-tab-btn[data-settings-tab='cloud']");
+  if (firstTab) firstTab.click();
+
   document.querySelector("#settings-dialog")?.showModal();
   cloudSync.updateControls(undefined, storageMode);
   applyTranslations(state.settings.language);
+}
+
+// 🌟 設定彈窗 4 大分頁切換監聽
+function setupSettingsTabs() {
+  const tabBtns = document.querySelectorAll(".settings-tab-btn");
+  const tabPanels = document.querySelectorAll(".settings-tab-panel");
+
+  tabBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const target = btn.dataset.settingsTab;
+      tabBtns.forEach((b) => b.classList.toggle("active", b === btn));
+      tabPanels.forEach((panel) => {
+        panel.classList.toggle("active", panel.dataset.settingsPanel === target);
+      });
+    });
+  });
 }
 
 const numericSettingKeys = ["twRate", "twDiscount", "twMinimum", "usPerShare", "usMinimum", "fxRate", "caPerShare", "caMinimum", "cadFxRate"];
@@ -1547,9 +1563,10 @@ document.querySelectorAll(".nav-item[href]").forEach((link) => link.addEventList
 if (state.storageError) toast("讀取已儲存資料時發生問題，目前顯示空白資料。", true);
 
 // ============================================================================
-// 系統啟動生命週期：依序初始化渲染、雲端同步、串流連接與報價首刷
+// 系統啟動生命週期：依序初始化渲染、雲端同步、串流連接、設定分頁與報價首刷
 // ============================================================================
 render();
+setupSettingsTabs(); // 初始化設定彈窗 4 大分頁切換監聽
 cloudSync.init(storageMode);
 usStream.connect();
 syncUsStreamSubscriptions();
