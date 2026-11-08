@@ -1,5 +1,5 @@
-// js/market-poller.js - 行情報價定時輪詢、全市場批次刷新、Render 喚醒與 Page Visibility 螢幕監聽排程模組
-import { fetchQuote, getQuoteDataFromResponse, fetchOfficialMisQuote } from "./quotes.js";
+// js/market-poller.js - 行情報價定時輪詢、全市場批次刷新、Render 喚醒與開盤時段排程模組
+import { fetchQuote, getQuoteDataFromResponse, isTaiwanRegularMarketHours } from "./quotes.js";
 
 function chunkArray(array, size = 20) {
   const chunks = [];
@@ -25,9 +25,14 @@ export async function mapWithConcurrency(items, concurrency, asyncFn) {
   return Promise.all(results);
 }
 
-export async function safeFetchQuoteUpdate(holding, settings) {
+export async function safeFetchQuoteUpdate(holding, settings, timeoutMs = 5000, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error("Timeout")), timeoutMs);
+
   try {
-    const result = await fetchQuote(holding.symbol, undefined, settings);
+    const result = await fetchQuote(holding.symbol, controller.signal, settings, options);
+    clearTimeout(timer);
+
     const price = result.price;
     const dailyChange = result.dailyChangePerShare;
     
@@ -46,7 +51,7 @@ export async function safeFetchQuoteUpdate(holding, settings) {
       updatedAt: new Date().toISOString(),
     };
   } catch (error) {
-    console.error(`更新 ${holding.symbol} 報價失敗：`, error);
+    clearTimeout(timer);
     return { id: holding.id, success: false };
   }
 }
@@ -68,6 +73,7 @@ export class MarketPoller {
     this.startTwPolling();
     this.setupPageVisibilityListener();
     this.warmupBackend();
+    // 進入網頁時執行靜默背景更新，不轉動使用者按鈕
     this.refreshAllQuotes({ silent: true });
   }
 
@@ -83,7 +89,11 @@ export class MarketPoller {
       const state = this.getState();
       const rawApiUrl = state.settings.quoteApiUrl || "https://my-stock-api-nhaj.onrender.com/api/realtime";
       const baseUrl = new URL(rawApiUrl).origin;
-      fetch(`${baseUrl}/`, { mode: "cors" }).catch(() => {});
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2500);
+      fetch(`${baseUrl}/`, { mode: "cors", signal: controller.signal })
+        .then(() => clearTimeout(timer))
+        .catch(() => clearTimeout(timer));
     } catch {}
   }
 
@@ -93,7 +103,10 @@ export class MarketPoller {
         if (this.usStream) {
           this.usStream.connect();
         }
-        this.pollTaiwanStocks();
+        // 僅在開盤時段切回前景時才進行高頻台股輪詢補刷
+        if (isTaiwanRegularMarketHours()) {
+          this.pollTaiwanStocks();
+        }
       }
     });
   }
@@ -101,6 +114,8 @@ export class MarketPoller {
   startTwPolling() {
     if (this.twPollTimer) clearInterval(this.twPollTimer);
     this.twPollTimer = setInterval(() => {
+      // 假日/非交易時段暫停定時輪詢
+      if (!isTaiwanRegularMarketHours()) return;
       this.pollTaiwanStocks();
     }, 10000);
   }
@@ -124,10 +139,19 @@ export class MarketPoller {
         const expandedChunk = chunk.flatMap((c) => [c.toUpperCase(), c.toLowerCase()]);
         parsedUrl.searchParams.set("tw_codes", [...new Set(expandedChunk)].join(","));
         parsedUrl.searchParams.delete("us_symbols");
-        const res = await fetch(parsedUrl.toString());
-        if (!res.ok) return {};
-        const json = await res.json();
-        return json.tw || {};
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 3500);
+        try {
+          const res = await fetch(parsedUrl.toString(), { signal: controller.signal });
+          clearTimeout(timer);
+          if (!res.ok) return {};
+          const json = await res.json();
+          return json.tw || {};
+        } catch {
+          clearTimeout(timer);
+          return {};
+        }
       });
 
       const chunkResults = await Promise.all(chunkPromises);
@@ -156,14 +180,12 @@ export class MarketPoller {
           holding.updatedAt = new Date().toISOString();
           hasChanged = true;
         } else {
-          // Render API 沒有這檔股票（如 00937B、00942B、00631L），列入補查名單
           missingHoldings.push(holding);
         }
       }
 
-      // 自動為 Render API 缺漏的標的啟用官方通道進行個別補查
       if (missingHoldings.length > 0) {
-        const rescueResults = await mapWithConcurrency(missingHoldings, 3, (h) => safeFetchQuoteUpdate(h, state.settings));
+        const rescueResults = await mapWithConcurrency(missingHoldings, 2, (h) => safeFetchQuoteUpdate(h, state.settings, 3500));
         for (const update of rescueResults) {
           if (update.success && update.price > 0) {
             const target = state.holdings.find((h) => h.id === update.id);
@@ -194,6 +216,7 @@ export class MarketPoller {
 
   async refreshAllQuotes({ silent = false } = {}) {
     if (this.isRefreshingAll) return;
+
     const state = this.getState();
     const activeHoldings = state.holdings.filter((h) => Number(h.shares) > 0);
     if (!activeHoldings.length) {
@@ -203,27 +226,128 @@ export class MarketPoller {
 
     this.isRefreshingAll = true;
     const button = document.querySelector("#refresh-quotes");
-    if (button) {
+
+    if (!silent && button) {
       button.classList.add("loading");
       button.disabled = true;
     }
 
+    let forceStopTimer = null;
+    const resetLoadingState = () => {
+      this.isRefreshingAll = false;
+      if (button) {
+        button.classList.remove("loading");
+        button.disabled = false;
+      }
+      if (forceStopTimer) {
+        clearTimeout(forceStopTimer);
+        forceStopTimer = null;
+      }
+    };
+
+    if (!silent) {
+      forceStopTimer = setTimeout(() => {
+        if (this.isRefreshingAll) {
+          resetLoadingState();
+          this.toast("已為您更新已知報價（部分標的連線逾時）。");
+        }
+      }, 10000);
+    }
+
     try {
-      const quoteResults = await mapWithConcurrency(activeHoldings, 3, (h) => safeFetchQuoteUpdate(h, state.settings));
+      const twHoldings = activeHoldings.filter((h) => h.market === "TW");
+      const usHoldings = activeHoldings.filter((h) => h.market === "US");
+      const caHoldings = activeHoldings.filter((h) => h.market === "CA");
       let successCount = 0;
 
-      for (const update of quoteResults) {
-        if (update.success) {
-          const target = state.holdings.find((h) => h.id === update.id);
-          if (target) {
-            target.currentPrice = update.price;
-            target.dailyChangePerShare = update.dailyChangePerShare;
-            target.previousClose = update.previousClose ?? target.previousClose ?? (update.dailyChangePerShare !== null ? update.price - update.dailyChangePerShare : null);
-            target.updatedAt = update.updatedAt;
-            if (update.name && (!target.name || target.name === target.symbol)) {
-              target.name = update.name;
+      // 🌟 核心突破：無論開盤還是週末休市，統一由後端 API 批次取得台股與美股最新／最後收盤數據
+      if (state.settings.quoteProvider !== "yahoo" && (twHoldings.length > 0 || usHoldings.length > 0)) {
+        try {
+          const rawApiUrl = state.settings.quoteApiUrl || "https://my-stock-api-nhaj.onrender.com/api/realtime";
+          const allTwCodes = [...new Set(twHoldings.map((h) => h.symbol.replace(/\.(TW|TWO)$/i, "")))];
+          const allUsCodes = [...new Set(usHoldings.map((h) => h.symbol.toUpperCase()))];
+          
+          const parsedUrl = new URL(rawApiUrl);
+          if (allTwCodes.length > 0) {
+            const expanded = allTwCodes.flatMap((c) => [c.toUpperCase(), c.toLowerCase()]);
+            parsedUrl.searchParams.set("tw_codes", [...new Set(expanded)].join(","));
+          } else {
+            parsedUrl.searchParams.delete("tw_codes");
+          }
+
+          if (allUsCodes.length > 0) {
+            parsedUrl.searchParams.set("us_symbols", allUsCodes.join(","));
+          } else {
+            parsedUrl.searchParams.delete("us_symbols");
+          }
+
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 6000);
+          const res = await fetch(parsedUrl.toString(), { signal: ctrl.signal });
+          clearTimeout(t);
+
+          if (res.ok) {
+            const json = await res.json();
+            const twData = json.tw || {};
+            const usData = json.us || {};
+
+            // 1. 寫入台股現價／週末最後收盤價
+            for (const holding of twHoldings) {
+              const code = holding.symbol.replace(/\.(TW|TWO)$/i, "");
+              const q = getQuoteDataFromResponse(twData, code);
+              if (q && Number(q.price) > 0) {
+                holding.currentPrice = Number(q.price);
+                if (q.prev_close !== undefined && q.prev_close !== null) holding.previousClose = Number(q.prev_close);
+                if (q.d !== undefined && q.d !== null) holding.dailyChangePerShare = Number(q.d);
+                else if (holding.previousClose) holding.dailyChangePerShare = holding.currentPrice - holding.previousClose;
+                holding.updatedAt = new Date().toISOString();
+                successCount++;
+              }
             }
-            successCount++;
+
+            // 2. 寫入美股現價／週末最後收盤價（解決週末 WebSocket 零封包）
+            for (const holding of usHoldings) {
+              const q = usData[holding.symbol.toUpperCase()];
+              if (q && Number(q.price) > 0) {
+                holding.currentPrice = Number(q.price);
+                if (q.prev_close !== undefined && q.prev_close !== null) holding.previousClose = Number(q.prev_close);
+                if (q.d !== undefined && q.d !== null) holding.dailyChangePerShare = Number(q.d);
+                else if (holding.previousClose) holding.dailyChangePerShare = holding.currentPrice - holding.previousClose;
+                holding.updatedAt = new Date().toISOString();
+                successCount++;
+              }
+            }
+          }
+        } catch (backendErr) {
+          console.warn("後端批次更新失敗，降級至個別更新:", backendErr);
+        }
+      }
+
+      // 加拿大股（或後端未能覆蓋的標的）走個別更新
+      const remainingHoldings = activeHoldings.filter((h) => 
+        h.market === "CA" || !h.updatedAt || (Date.now() - new Date(h.updatedAt).getTime() > 30000)
+      );
+
+      if (remainingHoldings.length > 0) {
+        const quoteResults = await mapWithConcurrency(
+          remainingHoldings,
+          2,
+          (h) => safeFetchQuoteUpdate(h, state.settings, 4500)
+        );
+
+        for (const update of quoteResults) {
+          if (update.success && update.price > 0) {
+            const target = state.holdings.find((h) => h.id === update.id);
+            if (target) {
+              target.currentPrice = update.price;
+              target.dailyChangePerShare = update.dailyChangePerShare;
+              target.previousClose = update.previousClose ?? target.previousClose ?? (update.dailyChangePerShare !== null ? update.price - update.dailyChangePerShare : null);
+              target.updatedAt = update.updatedAt;
+              if (update.name && (!target.name || target.name === target.symbol)) {
+                target.name = update.name;
+              }
+              successCount++;
+            }
           }
         }
       }
@@ -236,19 +360,17 @@ export class MarketPoller {
       if (!silent) {
         if (successCount >= activeHoldings.length) {
           this.toast(`已成功更新 ${activeHoldings.length} 檔股票最新行情。`);
+        } else if (successCount > 0) {
+          this.toast(`${successCount} / ${activeHoldings.length} 檔行情更新成功。`);
         } else {
-          this.toast(`${successCount} / ${activeHoldings.length} 檔行情更新成功。`, successCount === 0);
+          this.toast("目前休市中或連線逾時，已維持既有現價。");
         }
       }
     } catch (err) {
       console.error("批次更新行情異常:", err);
-      if (!silent) this.toast("行情更新失敗，請檢查網路或稍後再試。", true);
+      if (!silent) this.toast("行情更新失敗，請檢查網路連線。", true);
     } finally {
-      this.isRefreshingAll = false;
-      if (button) {
-        button.classList.remove("loading");
-        button.disabled = false;
-      }
+      resetLoadingState();
     }
   }
 }

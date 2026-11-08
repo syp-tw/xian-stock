@@ -6,6 +6,63 @@ const searchUrl = `${yahooApiRoot}/v1/finance/search`;
 const twseListUrl = apiRoot ? `${apiRoot}/twse/v1/opendata/t187ap03_L` : "https://openapi.twse.com.tw/v1/opendata/t187ap03_L";
 const tpexListUrl = apiRoot ? `${apiRoot}/tpex/openapi/v1/mopsfin_t187ap03_O` : "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O";
 
+/**
+ * 判斷當前是否落在台灣證券市場開盤常規交易時間（含盤後定價撮合至 14:35）
+ * 台北時間（UTC+8）週一至週五 09:00 - 14:35
+ */
+export function isTaiwanRegularMarketHours(timestampMs = Date.now()) {
+  const date = new Date(timestampMs);
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Taipei",
+    hour12: false,
+    weekday: "short",
+    hour: "numeric",
+    minute: "numeric",
+  });
+
+  const parts = formatter.formatToParts(date);
+  let weekday = "";
+  let hour = 0;
+  let minute = 0;
+
+  for (const part of parts) {
+    if (part.type === "weekday") weekday = part.value;
+    else if (part.type === "hour") hour = parseInt(part.value, 10);
+    else if (part.type === "minute") minute = parseInt(part.value, 10);
+  }
+
+  if (weekday === "Sat" || weekday === "Sun") return false;
+
+  const totalMinutes = hour * 60 + minute;
+  return totalMinutes >= 540 && totalMinutes <= 875;
+}
+
+/**
+ * 具備嚴格超時熔斷保護的 fetch 封裝，防止任何單一網路請求永久掛起
+ */
+async function fetchWithTimeout(url, options = {}, timeoutMs = 3000) {
+  if (options.signal?.aborted) {
+    throw new DOMException("The user aborted a request.", "AbortError");
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error("Request timeout")), timeoutMs);
+
+  if (options.signal) {
+    options.signal.addEventListener("abort", () => {
+      clearTimeout(timer);
+      controller.abort();
+    });
+  }
+
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export const TAIWAN_STOCK_DICT = {
   // === 熱門市值型、科技、海外與主動型 ETF ===
   "0050": "元大台灣50", "0051": "元大中型100", "0052": "富邦科技", "0056": "元大高股息",
@@ -30,7 +87,7 @@ export const TAIWAN_STOCK_DICT = {
   "00686R": "群益臺灣加權反1", "00681R": "元大美債20反1", "00664R": "國泰臺灣加權反1",
   "00634R": "富邦上証反1", "00638R": "元大滬深300反1", "00656R": "國泰中國A50反1",
 
-  // === 債券 ETF (櫃買中心 TPEx 上櫃掛牌，對應 .TWO) ===
+  // === 債券 ETF ===
   "00937B": "群益ESG投等債20+", "00942B": "台新美A公司債20+", "00679B": "元大美債20年", "00687B": "國泰20年美債",
   "00933B": "國泰10Y+金融債", "00720B": "元大投資級公司債", "00751B": "元大AAA至A公司債", "00772B": "中信高評級公司債",
   "00725B": "國泰投資級公司債", "00740B": "富邦全球投等債", "00746B": "富邦A級公司債", "00761B": "國泰A級公司債",
@@ -54,7 +111,7 @@ export const TAIWAN_STOCK_DICT = {
   "1325": "恆大", "1326": "台化", "1337": "再生-KY", "1338": "廣華-KY", "1340": "勝悅-KY",
   "1432": "大魯閣", "1440": "南紡", "1449": "佳和", "1452": "宏益", "1471": "首利",
 
-  // === 機電、電器、線纜、化學、生醫 ===
+  // === 機電、線纜、化學、生醫 ===
   "1503": "士電", "1504": "東元", "1513": "中興電", "1519": "華城", "1524": "耿鼎",
   "1526": "日馳", "1527": "鑽全", "1528": "恩德", "1536": "和大", "1540": "喬福",
   "1565": "精華", "1570": "力肯", "1582": "信錦", "1584": "精剛", "1589": "永冠-KY",
@@ -64,7 +121,7 @@ export const TAIWAN_STOCK_DICT = {
   "1734": "杏輝", "1737": "臺鹽", "1781": "合世", "1783": "和康生", "1784": "訊聯",
   "1785": "光洋科", "1786": "科妍", "1815": "富喬", "1904": "正隆", "1909": "榮成",
 
-  // === 鋼鐵、橡膠、汽車、航運 ===
+  // === 鋼鐵、汽車、航運 ===
   "2002": "中鋼", "2012": "春雨", "2014": "中鴻", "2020": "美亞", "2022": "聚亨",
   "2023": "燁輝", "2024": "志聯", "2025": "千興", "2030": "彰源", "2031": "新光鋼",
   "2069": "世豐", "2102": "泰豐", "2104": "國際中橡", "2108": "南帝", "2201": "裕隆",
@@ -73,92 +130,18 @@ export const TAIWAN_STOCK_DICT = {
   "2614": "東森", "2615": "萬海", "2616": "山隆", "2618": "長榮航", "2636": "台驊控股",
   "2641": "正德",
 
-  // === 觀光、餐飲、金融、貿易百貨 ===
+  // === 金融、觀光、百貨 ===
   "2705": "六福", "2727": "王品", "2734": "易飛網", "2801": "彰銀", "2812": "台中銀",
   "2834": "臺企銀", "2838": "聯邦銀", "2880": "華南金", "2881": "富邦金", "2882": "國泰金",
   "2883": "凱基金", "2884": "玉山金", "2885": "元大金", "2886": "兆豐金", "2887": "台新金",
   "2889": "國票金", "2890": "永豐金", "2891": "中信金", "2892": "第一金", "2912": "統一超",
   "2913": "農林", "2929": "淘帝-KY", "5871": "中租-KY", "5876": "上海商銀", "5880": "合庫金",
 
-  // === 電子通路、零組件、光電、通信 (2000-3000) ===
-  "2312": "金寶", "2328": "廣宇", "2329": "華泰", "2332": "友訊", "2338": "光罩",
-  "2340": "台亞", "2342": "茂矽", "2355": "敬鵬", "2364": "倫飛", "2365": "昆盈",
-  "2367": "燿華", "2369": "菱生", "2371": "大同", "2390": "云辰", "2401": "凌陽",
-  "2402": "毅嘉", "2405": "輔信", "2406": "國碩", "2409": "友達", "2417": "圓剛",
-  "2425": "承啟", "2426": "鼎元", "2438": "翔耀", "2439": "美律", "2442": "新美齊",
-  "2453": "凌群", "2457": "飛宏", "2461": "光群雷", "2464": "盟立", "2478": "大毅",
-  "2481": "強茂", "2482": "連宇", "2484": "希華", "2485": "兆赫", "2488": "漢平",
-  "2498": "宏達電", "2504": "國產", "2515": "中工", "2516": "新建", "2534": "宏盛",
-  "2537": "聯上發", "2547": "日勝生",
-
-  // === 3000-4000 區段股票 ===
-  "3010": "華立", "3011": "今皓", "3023": "信邦", "3024": "憶聲", "3025": "星通",
-  "3027": "盛達", "3029": "零壹", "3033": "威健", "3038": "全台", "3041": "揚智",
-  "3042": "晶技", "3043": "科風", "3048": "益登", "3049": "精金", "3051": "力特",
-  "3056": "富華新", "3057": "喬鼎", "3060": "銘異", "3095": "及成", "3105": "穩懋",
-  "3118": "進階", "3122": "笙泉", "3128": "昇銳", "3131": "弘塑", "3169": "亞信",
-  "3176": "基亞", "3209": "全科", "3213": "茂訊", "3221": "台嘉碩", "3228": "金麗科",
-  "3236": "千如", "3268": "海德威", "3276": "宇環", "3290": "東浦", "3293": "鈊象",
-  "3306": "鼎天", "3311": "閎暉", "3312": "弘憶股", "3313": "斐成", "3317": "尼克森",
-  "3321": "同泰", "3322": "建舜電", "3323": "加百裕", "3325": "旭品", "3338": "泰碩",
-  "3339": "泰谷", "3360": "尚立", "3372": "典範", "3390": "旭軟", "3430": "奇鈦科",
-  "3438": "類比科", "3455": "由田", "3498": "陽程", "3499": "環天科", "3508": "位速",
-  "3520": "華盈", "3527": "聚積", "3529": "力旺", "3537": "堡達", "3540": "曜越",
-  "3541": "西柏", "3543": "州巧", "3545": "敦泰", "3548": "兆利", "3550": "聯穎",
-  "3552": "同致", "3556": "禾瑞亞", "3576": "聯合再生", "3580": "友威科", "3587": "閎康",
-  "3588": "通嘉", "3607": "谷崧", "3645": "達邁", "3646": "艾恩特", "3673": "TPK-KY",
-  "3686": "達能", "3687": "歐買尬", "3702": "大聯大",
-
-  // === 4000-5000 區段股票 ===
-  "4105": "東洋", "4109": "加捷生醫", "4114": "健喬", "4128": "中天", "4132": "國鼎",
-  "4133": "亞諾法", "4142": "國光生", "4147": "中裕", "4150": "優你康", "4160": "訊聯基因",
-  "4162": "智擎", "4167": "松瑞藥", "4171": "瑞基", "4174": "浩鼎", "4303": "信立",
-  "4306": "炎洲", "4416": "郡都開發", "4510": "高鋒", "4513": "福裕", "4523": "永彰",
-  "4526": "東台", "4533": "協易機", "4541": "晟田", "4543": "萬在", "4552": "力達-KY",
-  "4714": "永捷", "4721": "美琪瑪", "4735": "豪展", "4739": "康普", "4743": "合一",
-  "4744": "皇將", "4746": "台耀", "4754": "國碳科", "4903": "聯光通", "4909": "新復興",
-  "4912": "聯德控股-KY", "4916": "事欣科", "4923": "力士", "4931": "新盛力", "4934": "太極",
-  "4939": "亞電", "4953": "緯致", "4960": "誠美材", "4961": "天鈺", "4968": "立積",
-  "4973": "廣穎", "4974": "亞泰", "4976": "佳凌", "4999": "鑫禾",
-
-  // === 5000-6000 區段股票 ===
-  "5009": "榮剛", "5011": "久陽", "5014": "建錩", "5202": "力新", "5210": "寶碩",
-  "5222": "全訊", "5227": "立凱-KY", "5272": "笙科", "5274": "信驊", "5315": "光聯",
-  "5347": "世界", "5351": "鈺創", "5356": "協益", "5398": "慕康生醫", "5410": "國眾",
-  "5425": "台半", "5452": "佶優", "5471": "松翰", "5481": "新華", "5483": "中美晶",
-  "5488": "松普", "5490": "同亨", "5498": "凱崴", "5512": "力麒", "5521": "工信",
-  "5608": "四維航",
-
-  // === 6000 區段股票 ===
-  "6104": "創惟", "6109": "亞元", "6114": "光聚晶電", "6116": "彩晶", "6120": "達運",
-  "6125": "廣運", "6126": "信音", "6127": "九豪", "6143": "振曜", "6156": "松上",
-  "6160": "欣技", "6164": "華興", "6165": "浪凡", "6169": "昱泉", "6179": "亞通",
-  "6180": "橘子", "6182": "合晶", "6183": "關貿", "6185": "幃翔", "6186": "新潤",
-  "6189": "豐藝", "6190": "萬泰科", "6202": "盛群", "6204": "艾華", "6207": "雷科",
-  "6217": "中探針", "6221": "晉泰", "6224": "聚鼎", "6233": "旺玖", "6235": "華孚",
-  "6237": "驊訊", "6243": "迅杰", "6244": "茂迪", "6248": "沛波", "6257": "矽格",
-  "6261": "久元", "6266": "泰詠", "6269": "台郡", "6274": "台燿", "6276": "安鈦克",
-  "6284": "佳邦", "6411": "晶焱", "6415": "矽力*-KY", "6416": "瑞祺電通", "6419": "京晨科",
-  "6432": "今展科", "6438": "迅得", "6441": "廣錠", "6443": "元晶", "6446": "藥華藥",
-  "6462": "神盾", "6470": "宇智", "6472": "保瑞", "6485": "點序", "6486": "互動",
-  "6488": "環球晶", "6492": "生華科", "6494": "九齊", "6505": "台塑化", "6517": "保勝光學",
-  "6530": "創威", "6532": "瑞耘", "6538": "倉和", "6547": "高端疫苗", "6549": "景凱",
-  "6558": "興能高", "6576": "逸達", "6586": "醣基", "6588": "東典光電", "6591": "動力-KY",
-  "6593": "台灣銘板", "6598": "ABC-KY", "6621": "華宇藥", "6672": "騰輝電子-KY", "6706": "惠特",
-  "6727": "亞泰金屬", "6742": "澤米", "6770": "力積電", "6793": "天力離岸", "6797": "圓點奈米",
-  "6799": "來頡", "6810": "新穎生醫", "6886": "遠東生技", "6926": "清淨海",
-
-  // === 8000-9999 區段股票 ===
-  "8011": "台通", "8027": "钛昇", "8039": "台虹", "8048": "德勝", "8050": "廣積",
-  "8054": "安國", "8064": "東捷", "8069": "元太", "8074": "鉅橡", "8076": "伍豐",
-  "8085": "福華", "8086": "宏捷科", "8088": "品安", "8092": "建暐", "8096": "擎亞",
-  "8099": "大世科", "8104": "錸寶", "8107": "大億金茂", "8111": "立碁", "8119": "公信",
-  "8150": "南茂", "8171": "天宇", "8213": "志超", "8215": "明基材", "8222": "寶一",
-  "8227": "巨有科技", "8240": "華宏", "8249": "菱光", "8261": "富鼎", "8299": "群聯",
-  "8383": "千附", "8429": "金麗-KY", "8431": "匯鑽科", "8435": "鉅邁", "8436": "大江",
-  "8437": "大地-KY", "8440": "綠電", "8443": "阿瘦", "8474": "光隆", "8936": "國統",
-  "9910": "豐泰", "9912": "偉聯", "9914": "美利達", "9919": "康那香", "9935": "慶豐富",
-  "9943": "好樂迪", "9962": "有益",
+  // === 其它代表性中小型與熱門個股 ===
+  "3008": "大立光", "3017": "奇鋐", "3037": "欣興", "3231": "緯創", "3293": "鈊象",
+  "3443": "創意", "3529": "力旺", "3661": "世芯-KY", "4966": "譜瑞-KY", "5274": "信驊",
+  "5347": "世界", "5483": "中美晶", "6446": "藥華藥", "6472": "保瑞", "6488": "環球晶",
+  "6669": "緯穎", "8069": "元太", "8299": "群聯"
 };
 
 export const US_STOCK_DICT = {
@@ -168,31 +151,17 @@ export const US_STOCK_DICT = {
   "INTC": "Intel (英特爾)", "ASML": "ASML (艾司摩爾)", "NFLX": "Netflix (網飛)", "COST": "Costco (好市多)",
   "BRK.B": "波克夏B", "V": "Visa", "DIS": "Disney (迪士尼)", "VOO": "Vanguard 標普500 ETF",
   "QQQ": "Invesco 納斯達克100 ETF", "SPY": "SPDR 標普500 ETF", "VT": "Vanguard 全球股票 ETF", "VTI": "Vanguard 全美市場 ETF",
+  "F": "Ford (福特汽車)",
 };
 
 export const TAIWAN_STOCK_ALIASES = {
-  "00631": "00631L",
-  "00632": "00632R",
-  "00685": "00685L",
-  "00686": "00686R",
-  "00675": "00675L",
-  "00676": "00676R",
-  "00670": "00670L",
-  "00671": "00671R",
-  "00679": "00679B",
-  "00687": "00687B",
-  "00937": "00937B",
-  "00942": "00942B",
-  "00933": "00933B",
-  "00720": "00720B",
-  "00751": "00751B",
-  "00772": "00772B",
-  "00948": "00948B",
-  "00945": "00945B",
-  "00953": "00953B",
+  "00631": "00631L", "00632": "00632R", "00685": "00685L", "00686": "00686R",
+  "00675": "00675L", "00676": "00676R", "00670": "00670L", "00671": "00671R",
+  "00679": "00679B", "00687": "00687B", "00937": "00937B", "00942": "00942B",
+  "00933": "00933B", "00720": "00720B", "00751": "00751B", "00772": "00772B",
+  "00948": "00948B", "00945": "00945B", "00953": "00953B",
 };
 
-// 完整上櫃 (TPEx / .TWO) 熱門代碼快取集合
 const KNOWN_TPEX_CODES = new Set([
   "1565", "1584", "1591", "1781", "1784", "1785", "1786", "1815", "2069", "2641",
   "2734", "3095", "3105", "3118", "3122", "3128", "3131", "3169", "3176", "3209",
@@ -238,31 +207,42 @@ export function normalizedSymbol(query) {
 }
 
 async function fetchWithCorsFallback(rawUrl, signal) {
+  if (signal?.aborted) {
+    throw new DOMException("The user aborted a request.", "AbortError");
+  }
+
   if (isNetlify) {
-    const res = await fetch(rawUrl, { signal, headers: { Accept: "application/json" } });
-    if (res.ok) return await res.json();
+    try {
+      const res = await fetchWithTimeout(rawUrl, { signal, headers: { Accept: "application/json" } }, 2500);
+      if (res.ok) return await res.json();
+    } catch {}
   }
 
   try {
-    const res = await fetch(rawUrl, { signal, headers: { Accept: "application/json" } });
+    const res = await fetchWithTimeout(rawUrl, { signal, headers: { Accept: "application/json" } }, 1500);
     if (res.ok) return await res.json();
   } catch (err) {
-    if (err.name === "AbortError") throw err;
+    if (signal?.aborted) throw err;
+  }
+
+  if (signal?.aborted) {
+    throw new DOMException("The user aborted a request.", "AbortError");
   }
 
   const proxies = [
-    `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}`,
+    `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}`,
   ];
 
   for (const proxyUrl of proxies) {
+    if (signal?.aborted) break;
     try {
-      const res = await fetch(proxyUrl, { signal, headers: { Accept: "application/json" } });
+      const res = await fetchWithTimeout(proxyUrl, { signal, headers: { Accept: "application/json" } }, 2800);
       if (res.ok) {
         return await res.json();
       }
     } catch (e) {
-      if (e.name === "AbortError") throw e;
+      if (signal?.aborted) throw e;
     }
   }
 
@@ -369,9 +349,6 @@ function extractCodeAndName(str) {
   return null;
 }
 
-/**
- * 核心身分識別函數：支援純股名 100% 精準反查
- */
 export function resolveStockIdentity(rawSymbol = "", rawName = "") {
   let sym = String(rawSymbol || "").trim();
   let name = String(rawName || "").trim();
@@ -412,13 +389,11 @@ export function resolveStockIdentity(rawSymbol = "", rawName = "") {
     ...(fullStockDict || {}),
   };
 
-  // 當代碼為空，依據股名四階段精確反查代號
   if (!sym || /[^\x00-\x7F]/.test(sym)) {
     const query = (sym && /[^\x00-\x7F]/.test(sym) ? sym : name)
       .toLowerCase()
       .replace(/[\s_()（）\-*]/g, "");
 
-    // 第一階段：完全精準匹配
     for (const [code, dictName] of Object.entries(mergedDict)) {
       const cleanDictName = String(dictName).toLowerCase().replace(/[\s_()（）\-*]/g, "");
       if (cleanDictName === query) {
@@ -428,7 +403,6 @@ export function resolveStockIdentity(rawSymbol = "", rawName = "") {
       }
     }
 
-    // 第二階段：別名與簡稱映射
     if (!sym || /[^\x00-\x7F]/.test(sym)) {
       const NAME_ALIASES = {
         "台灣50": "0050", "台50": "0050", "元大台50": "0050",
@@ -448,7 +422,6 @@ export function resolveStockIdentity(rawSymbol = "", rawName = "") {
       }
     }
 
-    // 第三階段：長度優先 + 特徵隔離模糊匹配
     if (!sym || /[^\x00-\x7F]/.test(sym)) {
       const isLev2 = /正2|正向|2x|bull/i.test(query);
       const isInv1 = /反1|反向|bear/i.test(query);
@@ -476,7 +449,6 @@ export function resolveStockIdentity(rawSymbol = "", rawName = "") {
       }
     }
 
-    // 第四階段：美股英文比對
     if (!sym || /[^\x00-\x7F]/.test(sym)) {
       for (const [code, desc] of Object.entries(US_STOCK_DICT)) {
         const cleanDesc = desc.toLowerCase().replace(/\s+/g, "");
@@ -527,7 +499,7 @@ let taiwanListingsPromise;
 function loadTaiwanListings() {
   if (!taiwanListingsPromise) {
     taiwanListingsPromise = Promise.all([twseListUrl, tpexListUrl].map(async (url) => {
-      const response = await fetch(url, { headers: { Accept: "application/json" } });
+      const response = await fetchWithTimeout(url, { headers: { Accept: "application/json" } }, 2500);
       if (!response.ok) throw new Error("遠端清單無法取得");
       return response.json();
     })).then(([twse, tpex]) => [
@@ -593,6 +565,41 @@ function getRenderApiUrl(settings, symbol) {
   return { url, market, ticker: clean };
 }
 
+export async function fetchFinnhubQuote(symbol, token, signal) {
+  const cleanSym = symbol.trim().toUpperCase().replace(/\.(US)$/i, "");
+  const targetUrl = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(cleanSym)}&token=${encodeURIComponent(token)}`;
+
+  const res = await fetchWithTimeout(targetUrl, { signal, headers: { Accept: "application/json" } }, 2800);
+  if (!res.ok) throw new Error("Finnhub REST API 響應錯誤");
+
+  const data = await res.json();
+  const price = Number(data.c);
+  if (!Number.isFinite(price) || price <= 0) {
+    throw new Error("Finnhub 查無有效現價");
+  }
+
+  const prevClose = Number(data.pc) || null;
+  const directChange = Number(data.d);
+  let dailyChangePerShare = null;
+  if (Number.isFinite(directChange)) {
+    dailyChangePerShare = directChange;
+  } else if (prevClose && prevClose > 0) {
+    dailyChangePerShare = price - prevClose;
+  }
+
+  const resolvedName = getStockName(cleanSym) || cleanSym;
+  rememberStockName(cleanSym, resolvedName);
+
+  return {
+    price,
+    currency: "USD",
+    market: "US",
+    name: resolvedName,
+    dailyChangePerShare,
+    previousClose: prevClose,
+  };
+}
+
 export async function fetchOfficialMisQuote(symbol, signal) {
   const clean = symbol.replace(/\.(TW|TWO)$/i, "").trim().toLowerCase();
   const isTwo = isLikelyTwo(symbol);
@@ -603,45 +610,54 @@ export async function fetchOfficialMisQuote(symbol, signal) {
   const item = data?.msgArray?.[0];
   if (!item) throw new Error("MIS 查無此股票");
 
+  const prevClose = Number(item.y) || null;
   let price = Number(item.z);
-  if (!Number.isFinite(price) || price <= 0) {
+  const hasTradeToday = Number.isFinite(price) && price > 0;
+
+  if (!hasTradeToday) {
     const bestBids = String(item.b || "").split("_");
     const bestAsks = String(item.a || "").split("_");
-    price = Number(bestBids[0]) || Number(bestAsks[0]) || Number(item.y);
+    price = Number(bestBids[0]) || Number(bestAsks[0]) || prevClose;
   }
   if (!Number.isFinite(price) || price <= 0) throw new Error("MIS 查無有效現價");
 
-  const prevClose = Number(item.y) || null;
   const canonical = `${clean.toUpperCase()}.${isTwo ? "TWO" : "TW"}`;
   const resolvedName = getStockName(canonical) || item.n || item.c;
   rememberStockName(canonical, resolvedName);
+
+  const dailyChangePerShare = (hasTradeToday && prevClose) ? (price - prevClose) : null;
 
   return {
     price,
     currency: "TWD",
     market: "TW",
     name: resolvedName,
-    dailyChangePerShare: prevClose ? price - prevClose : null,
+    dailyChangePerShare,
     previousClose: prevClose,
   };
 }
 
 async function doFetchYahooChart(symbol, signal) {
-  const targetUrl = `${yahooApiRoot}/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1m`;
+  const targetUrl = `${yahooApiRoot}/v8/finance/chart/${encodeURIComponent(symbol)}?range=5d&interval=1d`;
   const data = await fetchWithCorsFallback(targetUrl, signal);
   const result = data.chart?.result?.[0];
   if (!result) throw new Error("此股票目前沒有可用的報價資料。");
 
   const quote = result.indicators?.quote?.[0];
-  const closes = quote?.close || [];
+  const closes = (quote?.close || []).filter((close) => Number.isFinite(close) && close > 0);
   let price = Number(result.meta?.regularMarketPrice);
   if (!Number.isFinite(price) || price <= 0) {
-    price = Number([...closes].reverse().find((close) => Number.isFinite(close) && close > 0));
+    price = Number([...closes].reverse()[0]);
   }
   if (!Number.isFinite(price) || price <= 0) throw new Error("報價來源沒有提供有效的目前股價。");
 
   const currency = result.meta.currency || "USD";
-  const previousClose = Number(result.meta.chartPreviousClose || result.meta.previousClose);
+  let previousClose = Number(result.meta.chartPreviousClose || result.meta.previousClose);
+
+  if ((!Number.isFinite(previousClose) || previousClose <= 0) && closes.length >= 2) {
+    previousClose = closes[closes.length - 2];
+  }
+
   const market = currency === "TWD" ? "TW" : currency === "CAD" ? "CA" : "US";
 
   const resolvedName = getStockName(symbol) || result.meta?.shortName || result.meta?.longName || symbol;
@@ -672,6 +688,7 @@ async function fetchYahooQuote(rawSymbol, signal) {
   try {
     return await doFetchYahooChart(symbol, signal);
   } catch (firstErr) {
+    if (signal?.aborted) throw firstErr;
     if (symbol.endsWith(".TW")) {
       const altSymbol = symbol.replace(/\.TW$/i, ".TWO");
       try {
@@ -802,16 +819,28 @@ export async function searchQuotes(query, signal, settings = {}) {
   return results.slice(0, 10);
 }
 
-export async function fetchQuote(symbol, signal, settings = {}) {
+export async function fetchQuote(symbol, signal, settings = {}, options = {}) {
   const targetMarket = quoteMarket(symbol);
+  const skipRender = Boolean(options.skipRender);
 
-  if (settings.quoteProvider === "yahoo" || targetMarket === "CA") {
+  // 1. 若美股有設定 Finnhub Token，優先直連官方 REST API
+  if (targetMarket === "US" && settings.finnhubToken) {
+    try {
+      return await fetchFinnhubQuote(symbol, settings.finnhubToken, signal);
+    } catch (finnhubErr) {
+      if (signal?.aborted) throw finnhubErr;
+    }
+  }
+
+  // 2. 🌟 關鍵修復：只有當手動指定走 Yahoo 或加拿大股時才走前端直連 Yahoo。
+  // 假日休市時絕不略過後端！交由後端伺服器代理取得 5 日線收盤價，免除瀏覽器端 CORS 阻擋。
+  if (skipRender || settings.quoteProvider === "yahoo" || targetMarket === "CA") {
     return fetchYahooQuote(symbol, signal);
   }
 
   try {
     const { url, market, ticker } = getRenderApiUrl(settings, symbol);
-    const response = await fetch(url, { signal, headers: { Accept: "application/json" } });
+    const response = await fetchWithTimeout(url, { signal, headers: { Accept: "application/json" } }, 3500);
     if (!response.ok) throw new Error();
 
     const result = await response.json();
@@ -842,8 +871,9 @@ export async function fetchQuote(symbol, signal, settings = {}) {
       dailyChangePerShare,
       previousClose: Number.isFinite(Number(prevClose)) ? Number(prevClose) : null,
     };
-  } catch {
-    if (targetMarket === "TW") {
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    if (targetMarket === "TW" && isTaiwanRegularMarketHours()) {
       try {
         return await fetchOfficialMisQuote(symbol, signal);
       } catch {}
