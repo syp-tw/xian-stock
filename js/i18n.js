@@ -217,18 +217,30 @@ const translations = {
   "解除連結": "Unlink",
   "尚未連結共用檔案。": "No shared file is linked.",
 
-  // 🌟 設定彈窗 4 大分頁標籤
+  // 偏好設定分類標籤
   "雲端與備份": "Cloud & Sync",
   "即時行情": "Live Quotes",
   "費率與匯率": "Fees & FX",
   "一般設定": "General",
 
-  // 🌟 雙層整併欄位標題
+  // 雙層整併欄位標題
   "目前現價 / 平均買入價": "Price / Avg Cost",
   "帳面損益 / 報酬率": "Unrealized P/L / Return",
   "目前市值 / 投資本金": "Market Value / Cost Basis",
 
-  // 🌟 Google 試算表全平台同步
+  // 批量管理與帳戶移轉
+  "批量整理": "Batch Transfer",
+  "批量管理與條件移轉": "Batch Holdings Manager",
+  "自訂條件篩選持倉標的（例如股數小於 2 的零股），一鍵批次移動至指定帳戶（如零股帳戶）。": "Filter holdings by conditions (e.g. shares < 2) and move them to a designated account in batch.",
+  "持股數條件": "Shares Threshold",
+  "市場篩選": "Market Filter",
+  "移轉至目標帳戶": "Target Account",
+  "＋ 建立「零股帳戶」": "＋ Create Odd-lot Account",
+  "確認移動選取的標的": "Confirm Move Selected Holdings",
+  "沒有符合此條件的持倉標的。": "No holdings match this condition.",
+  "選取的標的已在目標帳戶內，未進行移動。": "Selected holdings are already in the target account. No move made.",
+
+  // Google 試算表全平台同步
   "Google 試算表全平台雲端資料庫": "Google Sheets Cloud Database",
   "複製試算表專用腳本": "Copy Apps Script",
   "支援跨裝置（手機 iPhone、Android、電腦 PC）雙向即時同步。資料完全保存在您個人的 Google 雲端，安全且免費。": "Supports cross-device (iPhone, Android, PC) real-time 2-way sync. Data is saved in your personal Google Drive safely and for free.",
@@ -240,7 +252,7 @@ const translations = {
   "Finnhub API Token（選填／由後端 FINNHUB_TOKEN 自動授權）": "Finnhub API Token (Optional / Auto-authorized via Backend)",
   "後端配置 FINNHUB_TOKEN 環境變數後，系統透過 /api/us-ws-url 端點安全交握獲取連線權限，無須在前端輸入或洩漏 Token。": "When FINNHUB_TOKEN is configured in backend, the system safely handshakes via /api/us-ws-url. No token needed on frontend.",
 
-  // 🌟 多格式匯出與匯入
+  // 多格式匯出與匯入
   "資料多格式匯出與匯入": "Multi-Format Export & Import",
   "支援雙向匯出與匯入：JSON / JS（全量無損還原）、CSV（通用格式）與 Excel XLSX / XLS（多分頁活頁簿）。": "Supports 2-way export & import: JSON/JS (lossless restore), CSV (universal), and Excel XLSX/XLS (multi-sheet workbook).",
   "下載 JSON": "Download JSON",
@@ -248,8 +260,9 @@ const translations = {
   "匯出 CSV": "Export CSV",
   "匯出 Excel (XLSX)": "Export Excel (XLSX)",
   "匯入檔案 (JSON/JS/CSV/Excel)": "Import File (JSON/JS/CSV/Excel)",
+  "無法識別此檔案欄位格式，請確保含有股票代號（或名稱）、股數以及價格（或金額）欄位。": "Unable to recognize file column format. Please ensure it contains stock ticker (or name), shares, and price (or amount) columns.",
 
-  // 🌟 手續費與匯率
+  // 手續費與匯率
   "台股手續費": "Taiwan Stock Fees",
   "券商牌告費率 (%)": "Broker Commission Rate (%)",
   "折扣比例 (%)": "Discount (%)",
@@ -331,8 +344,8 @@ export function translateText(value, language = "zh-TW") {
   if (accountRenamed) return `Account renamed to "${accountRenamed[1]}".`;
   const streamSwitched = value.match(/^已切換為美股 (.+)$/);
   if (streamSwitched) return `Switched to US stock ${streamSwitched[1]}.`;
-  const importSuccess = value.match(/^已成功由 (.+) 還原\/匯入資料！$/);
-  if (importSuccess) return `Successfully imported data from ${importSuccess[1]}!`;
+  const importSuccess = value.match(/^已成功由 (.+) 匯入 (\d+) 筆資料！$/);
+  if (importSuccess) return `Successfully imported ${importSuccess[2]} records from ${importSuccess[1]}!`;
   const confirmDeleteAccount = value.match(/^確定刪除「(.+)」帳戶？$/);
   if (confirmDeleteAccount) return `Are you sure you want to delete account "${confirmDeleteAccount[1]}"?`;
 

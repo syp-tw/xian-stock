@@ -1,17 +1,33 @@
 // js/ledger.js - 會計帳務與交易重算核心引擎（純業務邏輯，不依賴 DOM）
 import { getHoldingMetrics } from "./calculations.js";
 import { DEFAULT_ACCOUNT_ID } from "./storage.js";
+import { isLikelyTwo } from "./quotes.js";
 
 export const today = () => new Date().toISOString().slice(0, 10);
-export const makeId = () => crypto.randomUUID();
+
+export function safeId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+export const makeId = safeId;
 
 export function normalizeSymbol(symbol, market) {
   const value = symbol.trim().toUpperCase();
-  if (market === "TW" && !/\.(TW|TWO)$/.test(value)) return `${value}.TW`;
+  if (market === "TW" && !/\.(TW|TWO)$/.test(value)) {
+    const isTwo = isLikelyTwo(value);
+    return `${value}.${isTwo ? "TWO" : "TW"}`;
+  }
   return value;
 }
 
-export function emptyHolding({ symbol, name, market, accountId = DEFAULT_ACCOUNT_ID, id = makeId() }) {
+export function emptyHolding({ symbol, name, market, accountId = DEFAULT_ACCOUNT_ID, id = safeId() }) {
   return {
     id,
     accountId: accountId || DEFAULT_ACCOUNT_ID,
@@ -60,12 +76,11 @@ export function holdingBalance(holding) {
 }
 
 export function applyTransactionToHolding(holding, transaction) {
-  const { type, date, quantity, price, fee, ratio, currentPrice, dailyChangePerShare } = transaction;
+  const { type, date, quantity, price, fee = 0, ratio, currentPrice, dailyChangePerShare } = transaction;
   const oldShares = holding.shares;
-  if (type !== "buy" && holding.shares <= 0) throw new Error("這檔股票在此帳戶尚無持倉，請先新增買入紀錄。");
 
   if (type === "buy") {
-    if (quantity <= 0 || price <= 0) throw new Error("買入股數與價格都必須大於 0。");
+    if (quantity <= 0) throw new Error("買入股數必須大於 0。");
     holding.shares += quantity;
     holding.costBasis += quantity * price + fee;
     holding.fees += fee;
@@ -73,21 +88,22 @@ export function applyTransactionToHolding(holding, transaction) {
     holding.currentPrice = Number(currentPrice) || holding.currentPrice || price;
     if (Number.isFinite(dailyChangePerShare)) holding.dailyChangePerShare = dailyChangePerShare;
   } else if (type === "sell") {
-    if (quantity <= 0 || quantity > holding.shares + 1e-8 || price <= 0) {
-      throw new Error("賣出股數不可超過持有股數，價格必須大於 0。");
-    }
-    // 若全數賣出，強制歸零成本與股數，避免浮點數除法殘留微小非零成本
-    if (quantity >= holding.shares - 1e-6) {
+    if (quantity <= 0) throw new Error("賣出股數必須大於 0。");
+    if (holding.shares <= 0) {
+      holding.realizedProfit += quantity * price - fee;
+      holding.fees += fee;
+    } else if (quantity >= holding.shares - 1e-6) {
       holding.realizedProfit += quantity * price - fee - holding.costBasis;
       holding.costBasis = 0;
       holding.shares = 0;
+      holding.fees += fee;
     } else {
-      const allocatedCost = holding.shares > 0 ? (holding.costBasis * quantity) / holding.shares : 0;
+      const allocatedCost = (holding.costBasis * quantity) / holding.shares;
       holding.costBasis = Math.max(0, holding.costBasis - allocatedCost);
       holding.shares = Math.max(0, holding.shares - quantity);
       holding.realizedProfit += quantity * price - fee - allocatedCost;
+      holding.fees += fee;
     }
-    holding.fees += fee;
     holding.currentPrice = Number(currentPrice) || price;
   } else if (type === "dividend") {
     if (price < 0) throw new Error("配息金額不得小於 0。");
@@ -113,7 +129,6 @@ export function applyTransactionToHolding(holding, transaction) {
 
     holding.shares = Math.max(0, holding.shares - cancelledShares);
 
-    // 現金減資退還股款：先扣減本金成本，超額認列資本利得
     if (returnedAmount > 0) {
       const costReduction = Math.min(holding.costBasis, returnedAmount);
       holding.costBasis -= costReduction;
@@ -209,16 +224,17 @@ export function rebuildHolding(holding, state) {
 }
 
 export function addTransaction(
-  { type, symbol, name, market, accountId = DEFAULT_ACCOUNT_ID, date, quantity, price, fee, ratio, currentPrice, dailyChangePerShare },
+  { type, symbol, name, market, accountId = DEFAULT_ACCOUNT_ID, date, quantity, price, fee = 0, ratio, currentPrice, dailyChangePerShare },
   state
 ) {
   const targetAccountId = accountId || DEFAULT_ACCOUNT_ID;
   const canonicalSymbol = normalizeSymbol(symbol, market);
-  
+
   let holding = state.holdings.find(
-    (h) => h.symbol.toUpperCase() === canonicalSymbol.toUpperCase() &&
-           h.market === market &&
-           (h.accountId || DEFAULT_ACCOUNT_ID) === targetAccountId
+    (h) =>
+      h.symbol.toUpperCase() === canonicalSymbol.toUpperCase() &&
+      h.market === market &&
+      (h.accountId || DEFAULT_ACCOUNT_ID) === targetAccountId
   );
 
   if (holding) {
@@ -233,7 +249,7 @@ export function addTransaction(
   }
 
   const transaction = {
-    id: makeId(),
+    id: safeId(),
     accountId: targetAccountId,
     type,
     symbol: canonicalSymbol,

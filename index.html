@@ -9,7 +9,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <!-- 引入 SheetJS 輕量 CDN 函式庫（零打包編譯，支援 Excel 讀寫） -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <link rel="stylesheet" href="./styles.css" />
   </head>
@@ -38,7 +37,6 @@
         <header class="topbar">
           <div class="topbar-left">
             <div class="breadcrumb">我的投資 <span>/</span> <span id="current-view-label">全部帳戶總覽</span></div>
-            <!-- 多帳戶切換控制列 -->
             <div class="account-selector-wrap">
               <label for="account-selector" class="visually-hidden">切換帳戶</label>
               <select id="account-selector" class="account-select"></select>
@@ -46,7 +44,6 @@
             </div>
           </div>
           <div class="topbar-actions">
-            <!-- 美股即時狀態指示燈與頻率模式切換 -->
             <div class="stream-control-wrap">
               <span class="stream-indicator" id="us-stream-status" title="美股串流狀態"></span>
               <button type="button" class="stream-mode-btn active-standard" id="us-stream-mode-toggle" title="切換美股頻率模式">⏱️ 標準模式</button>
@@ -128,6 +125,7 @@
                 <p class="section-subtitle">相同股號自動合併；點選持倉列可檢視交易明細。</p>
               </div>
               <div class="section-actions">
+                <button class="button button-outline" id="batch-move-btn"><span>📦</span>批量整理</button>
                 <button class="button button-outline" id="manage-columns-btn"><span>⚙</span>自訂欄位</button>
                 <button class="button button-outline" id="add-custom-field"><span>＋</span>新增自訂欄位</button>
                 <button class="button button-primary button-small" id="add-holding-table"><span class="button-plus">＋</span>新增持倉</button>
@@ -168,6 +166,69 @@
         </div>
       </main>
     </div>
+
+    <!-- 批量管理與條件移轉 Dialog -->
+    <dialog class="app-dialog batch-dialog" id="batch-dialog">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">BATCH HOLDINGS MANAGER</p>
+          <h2>批量管理與條件移轉</h2>
+        </div>
+        <button type="button" class="dialog-close" data-close="batch-dialog" aria-label="關閉">×</button>
+      </div>
+      <p class="field-help">自訂條件篩選持倉標的（例如股數小於 2 的零股），一鍵批次移動至指定帳戶（如零股帳戶）。</p>
+
+      <div class="batch-filter-box">
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="batch-filter-shares">持股數條件</label>
+            <div class="input-with-prefix">
+              <span style="font-size: 11px; color: #587264; font-weight: bold; left: 8px;">小於 &lt;</span>
+              <input id="batch-filter-shares" type="number" min="0" step="any" placeholder="例如：2 或 1000" value="2" style="padding-left: 55px;" />
+            </div>
+          </div>
+          <div class="form-field">
+            <label for="batch-filter-market">市場篩選</label>
+            <select id="batch-filter-market">
+              <option value="all">全部市場</option>
+              <option value="TW">台股</option>
+              <option value="US">美股</option>
+              <option value="CA">加拿大股</option>
+            </select>
+          </div>
+        </div>
+        <div class="batch-quick-tags">
+          <span style="font-size: 11px; color: #72847a;">快捷條件：</span>
+          <button type="button" class="quick-tag-btn" data-shares="2">股數 &lt; 2</button>
+          <button type="button" class="quick-tag-btn" data-shares="10">股數 &lt; 10</button>
+          <button type="button" class="quick-tag-btn" data-shares="1000">零股 (&lt; 1000)</button>
+          <button type="button" class="quick-tag-btn" data-shares="">全部標的</button>
+        </div>
+      </div>
+
+      <div class="batch-list-header">
+        <div class="batch-select-all-wrap">
+          <input type="checkbox" id="batch-select-all" checked />
+          <label for="batch-select-all" id="batch-selected-summary">已選取 0 / 0 檔標的</label>
+        </div>
+      </div>
+      <ul id="batch-holdings-list" class="batch-holdings-list"></ul>
+
+      <div class="batch-target-panel">
+        <div class="form-field" style="margin-bottom: 0; flex: 1;">
+          <label for="batch-target-account">移轉至目標帳戶</label>
+          <select id="batch-target-account"></select>
+        </div>
+        <button type="button" class="button button-outline button-small" id="batch-create-odd-account-btn" style="white-space: nowrap; align-self: flex-end;">
+          ＋ 建立「零股帳戶」
+        </button>
+      </div>
+
+      <div class="dialog-actions">
+        <button class="button button-outline" type="button" data-close="batch-dialog">取消</button>
+        <button class="button button-primary" type="button" id="batch-confirm-move-btn">確認移動選取的標的</button>
+      </div>
+    </dialog>
 
     <!-- 投資帳戶管理 Dialog -->
     <dialog class="app-dialog compact-dialog" id="accounts-dialog">
@@ -367,7 +428,7 @@
       </form>
     </dialog>
 
-    <!-- 偏好設定彈窗（🌟 4 大分類分頁架構） -->
+    <!-- 偏好設定彈窗 -->
     <dialog class="app-dialog compact-dialog settings-dialog" id="settings-dialog">
       <form id="settings-form">
         <input type="hidden" name="overviewCurrency" value="TWD" />
@@ -376,7 +437,6 @@
           <button type="button" class="dialog-close" data-close="settings-dialog" aria-label="關閉">×</button>
         </div>
 
-        <!-- 分頁切換選單導覽 -->
         <nav class="settings-tabs" role="tablist">
           <button type="button" class="settings-tab-btn active" data-settings-tab="cloud">☁️ 雲端與備份</button>
           <button type="button" class="settings-tab-btn" data-settings-tab="quotes">⚡ 即時行情</button>
@@ -384,7 +444,6 @@
           <button type="button" class="settings-tab-btn" data-settings-tab="general">🌐 一般設定</button>
         </nav>
 
-        <!-- Tab 1: ☁️ 雲端與備份 -->
         <div class="settings-tab-panel active" data-settings-panel="cloud">
           <section class="settings-group" aria-labelledby="storage-mode-heading">
             <h3 id="storage-mode-heading">資料儲存位置</h3>
@@ -400,7 +459,6 @@
             <p class="field-help">本機、Google 試算表與共用檔案分開維護。切換模式前請先於下方完成連線設定。</p>
           </section>
 
-          <!-- Google 試算表全平台同步設定 -->
           <section class="settings-group" aria-labelledby="google-sheet-heading">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
               <h3 id="google-sheet-heading" style="margin: 0;">Google 試算表全平台雲端資料庫</h3>
@@ -430,7 +488,6 @@
             </div>
           </section>
 
-          <!-- 多格式匯出與匯入 -->
           <section class="settings-group" aria-labelledby="backup-heading">
             <h3 id="backup-heading">資料多格式匯出與匯入</h3>
             <p class="field-help">支援雙向匯出與匯入：JSON / JS（全量無損還原）、CSV（通用格式）與 Excel XLSX / XLS（多分頁活頁簿）。</p>
@@ -444,7 +501,6 @@
             </div>
           </section>
 
-          <!-- PC 本地共用雲端檔案 -->
           <section class="settings-group" aria-labelledby="shared-file-heading">
             <h3 id="shared-file-heading">PC 本地共用雲端檔案</h3>
             <p class="field-help">支援 Google Drive for desktop、OneDrive、Dropbox 等本機同步資料夾。僅支援 PC 版 Chrome/Edge 瀏覽器。</p>
@@ -464,7 +520,6 @@
           </section>
         </div>
 
-        <!-- Tab 2: ⚡ 即時行情 -->
         <div class="settings-tab-panel" data-settings-panel="quotes">
           <section class="settings-group" aria-labelledby="quote-provider-heading">
             <h3 id="quote-provider-heading">即時報價 API</h3>
@@ -490,7 +545,6 @@
           </section>
         </div>
 
-        <!-- Tab 3: 💰 費率與匯率 -->
         <div class="settings-tab-panel" data-settings-panel="fees">
           <div class="settings-group">
             <h3>台股手續費</h3>
@@ -523,7 +577,6 @@
           </div>
         </div>
 
-        <!-- Tab 4: 🌐 一般設定 -->
         <div class="settings-tab-panel" data-settings-panel="general">
           <div class="settings-group">
             <h3>顯示語系</h3>

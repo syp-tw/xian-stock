@@ -1,7 +1,7 @@
 // js/dialog-transaction.js - 新增與編輯交易彈窗控制器（含帳戶隔離與 AbortController 異步競態安全）
 import { estimateFee } from "./calculations.js";
 import { formatMoney, formatQuantity, locale, translateText, applyTranslations } from "./i18n.js";
-import { fetchQuote, getStockName, quoteMarket, searchQuotes } from "./quotes.js";
+import { fetchQuote, getStockName, quoteMarket, searchQuotes, normalizedSymbol } from "./quotes.js";
 import { addTransaction, normalizeSymbol, rebuildHolding, today } from "./ledger.js";
 import { DEFAULT_ACCOUNT_ID } from "./storage.js";
 
@@ -16,6 +16,7 @@ export class TransactionDialog {
     this.editingTransactionId = null;
     this.selectedQuote = null;
     this.suggestionTimer = null;
+    this.autoFetchTimer = null;
     this.suggestionController = null;
     this.quoteFetchController = null;
 
@@ -58,9 +59,9 @@ export class TransactionDialog {
     this.priceLabel = document.querySelector("#price-label");
   }
 
-  // 徹底終止未完成的網路請求，防止競態條件
   cancelPendingAsyncRequests() {
     clearTimeout(this.suggestionTimer);
+    clearTimeout(this.autoFetchTimer);
     if (this.suggestionController) {
       this.suggestionController.abort();
       this.suggestionController = null;
@@ -86,7 +87,6 @@ export class TransactionDialog {
       const normalizedEntered = entered.toUpperCase();
       const cleanEntered = normalizedEntered.replace(/\.(TW|TWO|TO|V|CN|NE)$/i, "");
 
-      // 嚴格在當前選擇的帳戶中查找持倉標的
       const accountHoldings = (state.holdings || []).filter(
         (h) => (h.accountId || DEFAULT_ACCOUNT_ID) === currentAccountId
       );
@@ -288,12 +288,23 @@ export class TransactionDialog {
 
   applyQuoteSelection(quote) {
     if (!quote) return;
-    const autoChineseName = getStockName(quote.symbol);
+    const canonical = normalizedSymbol(quote.symbol);
+    const autoChineseName = getStockName(canonical) || quote.name;
+    
     this.selectedQuote = {
       ...quote,
-      name: autoChineseName || quote.name || quote.symbol,
+      symbol: canonical,
+      name: autoChineseName || quote.name || canonical,
     };
-    if (this.symbolInput) this.symbolInput.value = quote.symbol;
+
+    // 🌟 核心防護：保留使用者原始輸入的英文字母後綴（如 00685L.TW, 00631L.TW），絕不倒退改回純數字
+    if (this.symbolInput) {
+      const currentTyped = this.symbolInput.value.trim().toUpperCase();
+      if (!currentTyped || currentTyped === quote.symbol.replace(/\.(TW|TWO)$/i, "")) {
+        this.symbolInput.value = canonical;
+      }
+    }
+
     this.suggestions?.classList.remove("visible");
     if (this.errorElem) this.errorElem.textContent = "";
     if (this.priceCurrency) this.priceCurrency.textContent = locale.currency[quote.market]?.symbol || "NT$";
@@ -311,15 +322,18 @@ export class TransactionDialog {
     this.quoteFetchController = new AbortController();
 
     const state = this.getState();
-    fetchQuote(quote.symbol, this.quoteFetchController.signal, state.settings)
+    fetchQuote(canonical, this.quoteFetchController.signal, state.settings)
       .then((result) => {
-        if (this.selectedQuote?.symbol !== quote.symbol) return;
+        const cleanSelected = this.selectedQuote?.symbol?.replace(/\.(TW|TWO)$/i, "").toUpperCase();
+        const cleanFetched = canonical.replace(/\.(TW|TWO)$/i, "").toUpperCase();
+        if (cleanSelected !== cleanFetched) return;
+
         if (result.market !== quote.market) {
           this.toast("報價幣別與預期市場不同，請確認股票代號。", true);
         }
-        const finalName = getStockName(quote.symbol) || result.name || quote.name;
+        const finalName = getStockName(canonical) || result.name || quote.name;
         this.selectedQuote = {
-          ...quote,
+          ...this.selectedQuote,
           name: finalName,
           dailyChangePerShare: result.dailyChangePerShare,
         };
@@ -332,7 +346,7 @@ export class TransactionDialog {
 
         this.updateFeeEstimate();
         this.updatePreview();
-        this.toast(`${quote.symbol} (${finalName}) 已帶入報價 ${formatMoney(result.price, quote.market, 2, state.settings?.language || "zh-TW")}。`);
+        this.toast(`${canonical} (${finalName}) 已帶入報價 ${formatMoney(result.price, quote.market, 2, state.settings?.language || "zh-TW")}。`);
       })
       .catch((error) => {
         if (error.name === "AbortError") return;
@@ -347,7 +361,7 @@ export class TransactionDialog {
     if (!quotes.length) {
       const empty = document.createElement("div");
       empty.className = "quote-empty";
-      empty.textContent = "找不到符合的股票，請再試試看代號或中文簡稱（如 台積電、00878）。";
+      empty.textContent = "找不到符合的股票，請再試試看代號或中文簡稱（如 00685L、00631L、00937B）。";
       this.suggestions.append(empty);
     } else {
       for (const quote of quotes) {
@@ -410,7 +424,6 @@ export class TransactionDialog {
     const state = this.getState();
     const accounts = state.accounts || [];
 
-    // 動態填入投資帳戶選單
     if (this.accountSelect) {
       this.accountSelect.replaceChildren();
       for (const acc of accounts) {
@@ -427,7 +440,7 @@ export class TransactionDialog {
       } else {
         this.accountSelect.value = accounts[0]?.id || DEFAULT_ACCOUNT_ID;
       }
-      this.accountSelect.disabled = Boolean(holding); // 既有持倉鎖定該帳戶
+      this.accountSelect.disabled = Boolean(holding);
     }
 
     if (this.form.elements.transactionId) this.form.elements.transactionId.value = "";
@@ -464,7 +477,7 @@ export class TransactionDialog {
     if (this.searchQuoteBtn) this.searchQuoteBtn.disabled = Boolean(transaction.locked);
     if (this.accountSelect) {
       this.accountSelect.value = transaction.accountId || holding?.accountId || DEFAULT_ACCOUNT_ID;
-      this.accountSelect.disabled = true; // 歷史交易禁止竄改帳戶
+      this.accountSelect.disabled = true;
     }
 
     if (this.form.elements.transactionId) this.form.elements.transactionId.value = transaction.id;
@@ -493,10 +506,8 @@ export class TransactionDialog {
   }
 
   initEventListeners() {
-    // 監聽彈窗關閉事件，全面取消正在進行的未竟請求
     this.dialog?.addEventListener("close", () => this.cancelPendingAsyncRequests());
 
-    // 帳戶選擇切換時，自動重新綁定該帳戶下的庫存股數提示
     this.accountSelect?.addEventListener("change", () => {
       this.updateCurrentSharesDisplay();
       this.updatePreview();
@@ -528,21 +539,19 @@ export class TransactionDialog {
     });
 
     this.symbolInput?.addEventListener("input", () => {
-      const value = this.symbolInput.value.trim();
-      const autoChineseName = getStockName(value);
+      const rawInput = this.symbolInput.value.trim();
+      const canonical = normalizedSymbol(rawInput);
+      const autoChineseName = getStockName(canonical) || getStockName(rawInput);
 
       if (autoChineseName) {
         this.selectedQuote = {
-          symbol: normalizeSymbol(value, quoteMarket(value)),
+          symbol: canonical,
           name: autoChineseName,
-          market: quoteMarket(value),
+          market: quoteMarket(canonical),
         };
       } else {
         this.selectedQuote = null;
       }
-
-      if (this.currentPriceInput) this.currentPriceInput.value = "";
-      if (this.priceInput) this.priceInput.value = "";
 
       this.updateCurrentSharesDisplay();
 
@@ -556,18 +565,28 @@ export class TransactionDialog {
       this.updateFeeEstimate();
       this.updatePreview();
       clearTimeout(this.suggestionTimer);
+      clearTimeout(this.autoFetchTimer);
       if (this.suggestionController) this.suggestionController.abort();
 
-      if (!value) {
+      if (!rawInput) {
         this.suggestions?.classList.remove("visible");
         return;
+      }
+
+      // 只要匹配到正確股名，直接執行查價帶入，不覆寫使用者的代號輸入框
+      if (autoChineseName) {
+        this.autoFetchTimer = setTimeout(() => {
+          if (this.symbolInput?.value.trim().toUpperCase() === rawInput.toUpperCase() && this.selectedQuote) {
+            this.applyQuoteSelection(this.selectedQuote);
+          }
+        }, 350);
       }
 
       this.suggestionTimer = setTimeout(async () => {
         this.suggestionController = new AbortController();
         try {
-          const quotes = await searchQuotes(value, this.suggestionController.signal, this.getState().settings);
-          if (this.symbolInput.value.trim() !== value) return;
+          const quotes = await searchQuotes(rawInput, this.suggestionController.signal, this.getState().settings);
+          if (this.symbolInput.value.trim() !== rawInput) return;
           this.renderSuggestions(quotes);
         } catch (error) {
           if (error.name !== "AbortError") {
@@ -629,7 +648,8 @@ export class TransactionDialog {
         return;
       }
 
-      const canonicalSymbol = normalizeSymbol(symbolValue, selectedMarket);
+      // 嚴格確保帶 L, R, B 的代碼不被截斷，並加上正確市場後綴
+      const canonicalSymbol = normalizedSymbol(symbolValue);
       const autoChineseName = getStockName(canonicalSymbol) || getStockName(symbolValue);
       const resolvedName = (this.selectedQuote && this.selectedQuote.name !== symbolValue)
         ? this.selectedQuote.name

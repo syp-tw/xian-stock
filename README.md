@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/Import%20%2F%20Export-JSON%20%7C%20CSV%20%7C%20Excel-217346?style=for-the-badge&logo=microsoftexcel" alt="JSON、CSV 與 Excel 匯入匯出" />
 </p>
 
-> 輕量、手機友善的台股、美股與加拿大股多帳戶投資紀錄工具。前端採用原生 HTML、CSS 與 JavaScript ES Modules，無 npm 安裝或建置流程。支援瀏覽器本機儲存、電腦共用檔案、Google 試算表同步及多格式備份。
+> 輕量、手機友善的台股、美股與加拿大股多帳戶投資紀錄工具。前端採用原生 HTML、CSS 與 JavaScript ES Modules，無 npm 安裝或建置流程。支援瀏覽器本機儲存、電腦共用檔案、Google 試算表同步、零股批量條件移轉，以及各大券商 CSV／Excel 對帳單高容錯自動解析。
 >
 > 本工具僅供投資紀錄與資訊整理，不構成投資建議。行情、匯率及費用估算可能延遲或與券商資料不同，請以實際交易資訊為準。
 
@@ -16,10 +16,10 @@
 ```text
 ┌──────────────────────────────────────────────────────────┐
 │ 前端：靜態網站（GitHub Pages、Netlify 或其他靜態主機）   │
-│ 原生 HTML / CSS / ES Modules；無建置流程                 │
+│ 原生 HTML / CSS / ES Modules；無 npm 安裝或建置流程     │
 │                                                          │
 │ 儲存：瀏覽器 LocalStorage / 電腦共用 JSON / Google Sheets│
-│ 匯入匯出：JSON、JS、CSV、Excel XLSX / XLS                │
+│ 匯入匯出：JSON、JS、通用券商 CSV、Excel XLSX / XLS       │
 └───────────────┬───────────────────┬──────────────────────┘
                 │                   │
      美股授權與報價           使用者設定的 Apps Script Web App
@@ -30,7 +30,7 @@
                 │
       Finnhub WebSocket（美股）
 
-行情搜尋亦可能直接連線至 Yahoo Finance、TWSE、TPEx；
+行情搜尋亦支援 Yahoo Finance、TWSE、TPEx；
 Excel 功能使用 SheetJS CDN。
 ```
 
@@ -52,6 +52,12 @@ Excel 功能使用 SheetJS CDN。
 - 可設定台股、美股及加拿大股手續費與換匯匯率；台股賣出另估算證交稅。
 - 全數賣出時歸零持股及成本，避免浮點數殘值。
 - 費率與稅費屬估算值，請依券商實際收費及適用規定核對。
+
+### 批量持倉管理與帳戶移轉
+
+- 可依市場及持股數量條件篩選標的，再逐檔勾選或全選批次移轉至指定帳戶。
+- 移轉時會一併更新所選持倉的帳戶及對應歷史交易帳戶；可快速建立並選取「零股帳戶」。
+- 移轉前請確認篩選條件與選取清單；移轉不會合併目標帳戶中已存在的同標的持倉。
 
 ### 行情與股票搜尋
 
@@ -77,9 +83,10 @@ Excel 功能使用 SheetJS CDN。
 ### 多格式匯入與匯出
 
 - **JSON**：完整備份及還原帳戶、持倉、交易、自訂欄位、期初結餘與設定。**JS**：另可匯出含備份資料的 JavaScript 檔；若要可靠還原，請使用 JSON 備份。
-- **CSV**：匯入及匯出鮮存股資料，也可匯入包含日期、代號、股數、價格等欄位的通用交易明細。
-- **Excel XLSX / XLS**：匯出庫存、交易、帳戶分頁；也支援讀取相應分頁或鮮存股完整備份。
+- **CSV**：匯入及匯出鮮存股資料，也可自動解析常見券商 CSV 對帳單及包含日期、代號、股數、價格等欄位的通用交易明細。
+- **Excel XLSX / XLS**：匯出庫存、交易、帳戶分頁；也支援讀取相應分頁、鮮存股完整備份及常見券商對帳單工作表。
 - XLSX 匯出檔含 `_SystemState` 隱藏分頁，內含完整 JSON 備份，以支援無損還原。
+- 券商檔案解析會嘗試自動辨識表頭及欄位；不同券商格式仍可能需要整理，匯入後請核對資料。
 - Excel 功能使用從 SheetJS CDN 載入的函式庫，使用時需要網路連線。
 - 匯入會更新目前選擇的儲存位置，匯入前請先備份重要資料。
 
@@ -128,12 +135,16 @@ Google 試算表會保存完整投資備份於隱藏資料分頁，並更新可�
 
 | 模組 | 職責 | 維護重點 |
 |---|---|---|
-| `js/app.js` | 應用程式初始化、畫面、狀態保存與替換、事件協調 | 狀態修改應透過共用的 `persist`／`replaceState` 流程，讓目前儲存模式及串流訂閱同步更新。 |
+| `js/app.js` | 應用程式初始化、持倉表格渲染、狀態保存與替換，以及各功能模組協調 | 狀態修改應透過共用的 `persist`／`replaceState` 流程，讓目前儲存模式及串流訂閱同步更新；彈窗操作由對應模組處理。 |
 | `js/ui-accounts.js` | 帳戶選單與新增、改名、刪除 | 改名會去除頭尾空白並拒絕空白或重複名稱；有持倉或交易紀錄的帳戶不可直接刪除。 |
+| `js/ui-batch.js` | 批量篩選、選取持倉與帳戶移轉 | 移轉持倉時一併更新對應歷史交易的帳戶。 |
+| `js/dialog-transaction.js` | 新增與編輯交易、股票搜尋及報價 | 交易寫入及歷史交易編輯需維持帳戶隔離與帳本回放一致性。 |
+| `js/dialog-holding.js` | 持倉詳情、歷史交易管理、庫存校正及自訂欄位 | 刪除或修改持倉與交易時，需同步維持帳本資料一致。 |
+| `js/dialog-settings.js` | 設定表單、分類標籤、儲存模式切換及 Google 試算表連線操作 | 儲存模式切換與設定保存會協調各同步管理器及美股串流。 |
 | `js/market-poller.js` | 台股輪詢、持倉批次刷新、頁面喚醒處理 | 台股持倉每 10 秒輪詢；回到前景會喚醒美股串流並補刷台股。啟動時會對報價 API 主機送出背景預熱請求。 |
 | `js/us-stream.js` | Finnhub WebSocket 連線、訂閱、節流與重連 | 標準模式限美東平日常規交易時段，約 5 秒批次更新；Geek 模式即時處理收到的成交資料。斷線採逐步增加、最高 30 秒的重連延遲。 |
 | `js/google-sheet-sync.js` | Google Apps Script Web App 同步 | 編輯停止約 3 秒後推送完整備份；亦支援手動 Push／Pull。 |
-| `js/backup.js` | JSON、JS、CSV 與 Excel 匯入匯出 | CSV 有內建引號解析；Excel 讀寫依賴 `index.html` 載入的 SheetJS。 |
+| `js/backup.js` | JSON、JS、CSV 與 Excel 匯入匯出 | CSV 有內建引號解析及通用券商表格欄位辨識；Excel 讀寫依賴 `index.html` 載入的 SheetJS。 |
 | `js/calculations.js` | 持倉與總覽指標、手續費估算 | 日損益只累加有資料的持倉；總報酬率以總損益除以總成本計算。 |
 | `js/storage.js` | 預設值、資料正規化及瀏覽器持久化 | 維護多帳戶匯入相容、期初餘額及雙層欄位設定。 |
 | `js/ledger.js` | 交易回放及持倉成本更新 | 帳本識別鍵為 `${accountId}:${market}:${symbol}`；修改交易型態時需維持回放一致性。 |
@@ -195,10 +206,12 @@ Google 試算表會保存完整投資備份於隱藏資料分頁，並更新可�
 ├── .vscode/
 │   └── launch.json            # 本機 Chrome 啟動設定
 └── js/
-    ├── app.js                 # 主控、帳戶、交易 UI、同步及匯入匯出
+    ├── app.js                 # 應用程式主控、持倉表格與模組協調
     ├── backup.js              # JSON、JS、CSV、Excel 序列化與解析
     ├── calculations.js        # 持倉、績效及交易費用計算
     ├── cloud-sync.js          # 共用檔案同步與衝突處理
+    ├── dialog-holding.js      # 持倉詳情、歷史交易及庫存資料管理
+    ├── dialog-settings.js     # 設定表單、分類標籤與儲存模式管理
     ├── dialog-transaction.js  # 交易表單、股票搜尋及報價
     ├── google-sheet-sync.js   # Google Apps Script Web App 同步
     ├── i18n.js                # 繁體中文／英文翻譯與格式化
@@ -208,6 +221,7 @@ Google 試算表會保存完整投資備份於隱藏資料分頁，並更新可�
     ├── shared-file.js         # File System Access API、IndexedDB 及指紋
     ├── storage.js             # 狀態標準化與本機持久化
     ├── ui-accounts.js         # 帳戶選單與帳戶管理
+    ├── ui-batch.js            # 批量持倉篩選與帳戶移轉
     └── us-stream.js           # Finnhub 美股 WebSocket 串流
 ```
 

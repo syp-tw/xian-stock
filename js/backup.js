@@ -1,12 +1,82 @@
 // js/backup.js - 備份導出、還原解析、CSV 與 Excel (XLS/XLSX) 多格式序列化模組
 import { normalizeImportedState, DEFAULT_ACCOUNT_ID } from "./storage.js";
+import { resolveStockIdentity, getStockName } from "./quotes.js";
 
 const BACKUP_FORMAT = "xian-stock-backup";
 const BACKUP_VERSION = 2;
 
-// ============================================================================
-// 1. JSON / JS 序列化與解析
-// ============================================================================
+export function safeId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+export function cleanNumber(val) {
+  if (val === null || val === undefined) return 0;
+  if (typeof val === "number") return Number.isFinite(val) ? val : 0;
+  let s = String(val).trim();
+  if (!s || s === "--" || s === "-") return 0;
+
+  s = s
+    .replace(/[\uFF10-\uFF19]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .replace(/[\uFF0C]/g, ",")
+    .replace(/[NT$¥,\s%]/gi, "");
+
+  if (/^\((.+)\)$/.test(s)) {
+    s = "-" + s.replace(/^\((.+)\)$/, "$1");
+  }
+
+  const num = Number(s);
+  return Number.isFinite(num) ? num : 0;
+}
+
+export function normalizeDate(rawDate, fallbackDate = new Date().toISOString().slice(0, 10)) {
+  if (!rawDate) return fallbackDate;
+  let str = String(rawDate).trim().replace(/[\uFF10-\uFF19]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
+  if (!str) return fallbackDate;
+
+  str = str.split(/[ T]/)[0].trim();
+
+  if (/^\d{7}$/.test(str)) {
+    const rocYear = parseInt(str.slice(0, 3), 10);
+    return `${rocYear + 1911}-${str.slice(3, 5)}-${str.slice(5, 7)}`;
+  }
+  if (/^\d{8}$/.test(str)) {
+    return `${str.slice(0, 4)}-${str.slice(4, 6)}-${str.slice(6, 8)}`;
+  }
+
+  const parts = str.split(/[/.\-_]/).filter(Boolean);
+  if (parts.length === 3) {
+    const p1 = parseInt(parts[0], 10);
+    const p2 = parseInt(parts[1], 10);
+    const p3 = parseInt(parts[2], 10);
+
+    if (Number.isFinite(p1) && Number.isFinite(p2) && Number.isFinite(p3)) {
+      if (p1 > 0 && p1 < 1900) {
+        return `${p1 + 1911}-${String(p2).padStart(2, "0")}-${String(p3).padStart(2, "0")}`;
+      }
+      if (p1 >= 1900 && p1 < 2100) {
+        return `${String(p1)}-${String(p2).padStart(2, "0")}-${String(p3).padStart(2, "0")}`;
+      }
+      if (p3 >= 1900 && p3 < 2100 && p1 >= 1 && p1 <= 12) {
+        return `${String(p3)}-${String(p1).padStart(2, "0")}-${String(p2).padStart(2, "0")}`;
+      }
+    }
+  }
+
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime()) && parsed.getFullYear() >= 1970 && parsed.getFullYear() < 2100) {
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  return fallbackDate;
+}
+
 export function serializeBackup(state) {
   return JSON.stringify({
     format: BACKUP_FORMAT,
@@ -30,7 +100,6 @@ export function serializeJsBackup(state) {
 
 export function parseBackup(text) {
   let cleanText = text.trim();
-  // 相容以 JS 變數包裹的代碼
   if (cleanText.startsWith("const ") || cleanText.startsWith("var ") || cleanText.startsWith("let ")) {
     const eqIdx = cleanText.indexOf("=");
     if (eqIdx > 0) {
@@ -50,9 +119,6 @@ export function parseBackup(text) {
   return normalizeImportedState(parsed);
 }
 
-// ============================================================================
-// 2. CSV 序列化與 RFC 4180 完整雙向解析
-// ============================================================================
 function csvCell(value) {
   const text = value === null || value === undefined ? "" : String(value);
   const safeText = typeof value === "string" && /^[\t\r ]*[=+\-@]/.test(text) ? `'${text}` : text;
@@ -150,12 +216,123 @@ export function parseCsvRows(csvText) {
     currentRow.push(currentCell.trim());
     rows.push(currentRow);
   }
-  return rows.filter((r) => r.length > 1);
+  return rows.filter((r) => r.length > 0);
 }
 
-export function parseCsvBackup(csvText) {
-  const rows = parseCsvRows(csvText);
-  if (!rows.length) throw new Error("CSV 內容為空。");
+function applyTransactionSafely(holding, tx) {
+  const { type, quantity, price, fee = 0 } = tx;
+  if (type === "buy") {
+    holding.shares += quantity;
+    holding.costBasis += quantity * price + fee;
+    holding.fees += fee;
+    if (!holding.buyDate || tx.date < holding.buyDate) holding.buyDate = tx.date;
+    if (price > 0) holding.currentPrice = price;
+  } else if (type === "sell") {
+    if (holding.shares <= 0) {
+      holding.realizedProfit += quantity * price - fee;
+      holding.fees += fee;
+    } else if (quantity >= holding.shares - 1e-6) {
+      holding.realizedProfit += quantity * price - fee - holding.costBasis;
+      holding.costBasis = 0;
+      holding.shares = 0;
+      holding.fees += fee;
+    } else {
+      const allocatedCost = (holding.costBasis * quantity) / holding.shares;
+      holding.costBasis = Math.max(0, holding.costBasis - allocatedCost);
+      holding.shares = Math.max(0, holding.shares - quantity);
+      holding.realizedProfit += quantity * price - fee - allocatedCost;
+      holding.fees += fee;
+    }
+    if (price > 0) holding.currentPrice = price;
+  } else if (type === "dividend") {
+    holding.dividends += (quantity || holding.shares) * price;
+  } else if (type === "stockDividend") {
+    holding.shares += quantity;
+  }
+}
+
+/**
+ * 通用券商二維表格解析引擎
+ * 🌟 嚴格區分：成交均價 (pIdx)、市價 (curPriceIdx)、現值 (mValIdx)、付出成本 (cIdx)
+ */
+export function parseBrokerTableRows(rows) {
+  if (!rows || rows.length === 0) return null;
+
+  for (let i = 0; i < Math.min(5, rows.length); i++) {
+    const firstCell = String(rows[i][0] || "").trim().toLowerCase();
+    if (firstCell === "record_type") {
+      return parseOfficialCsv(rows, i);
+    }
+  }
+
+  let headerRowIdx = -1;
+  let symIdx = -1;
+  let nameIdx = -1;
+  let qtyIdx = -1;
+  let unitPriceIdx = -1;
+  let totalCostIdx = -1;
+  let dateIdx = -1;
+  let typeIdx = -1;
+  let feeIdx = -1;
+  let curPriceIdx = -1;
+  let mValIdx = -1;
+  let isLotUnit = false;
+
+  for (let r = 0; r < Math.min(35, rows.length); r++) {
+    const row = rows[r].map((c) => String(c || "").trim().toLowerCase());
+    
+    // 代號欄位
+    const sIdx = row.findIndex((h) =>
+      h.includes("symbol") || h.includes("ticker") || h.includes("代號") || h.includes("代碼") || (h.includes("code") && !h.includes("postal"))
+    );
+    // 股名欄位
+    const nIdx = row.findIndex((h, idx) =>
+      idx !== sIdx && (h.includes("name") || h.includes("名稱") || h.includes("股名") || h.includes("標的") || h.includes("股票"))
+    );
+    // 股數欄位
+    const qIdx = row.findIndex((h) =>
+      h.includes("quantity") || h.includes("shares") || h.includes("股數") || h.includes("數量") || h.includes("庫存") || h.includes("持股") || h.includes("張數")
+    );
+    // 1. 成交均價 / 買入單價欄位
+    const pIdx = row.findIndex((h) =>
+      h === "成交均價" || h === "買進均價" || h === "成本價" || h.includes("均價") || h.includes("買進價") || (h.includes("單價") && !h.includes("市")) || (h.includes("價格") && !h.includes("總") && !h.includes("市")) || h === "price"
+    );
+    // 2. 付出成本 / 總投資本金欄位（🌟 嚴格排除現值）
+    const cIdx = row.findIndex((h) =>
+      h === "付出成本" || h === "總成本" || h === "買進成本" || h === "成本金額" || h === "投資金額" || h === "成交價金" || h === "成交金額" ||
+      (h.includes("成本") && !h.includes("均") && !h.includes("市")) || h.includes("價金") || h.includes("淨收付")
+    );
+    // 3. 市價 / 目前現價欄位
+    const curIdx = row.findIndex((h) =>
+      h === "市價" || h === "現價" || h === "目前現價" || h === "收盤價" || h.includes("市價") || (h.includes("現價") && !h.includes("均"))
+    );
+    // 4. 現值 / 評估市值欄位
+    const mvIdx = row.findIndex((h) =>
+      h === "現值" || h === "市值" || h === "預估現值" || h === "總現值" || (h.includes("現值") && !h.includes("價")) || h.includes("市值")
+    );
+
+    // 當一行同時包含「代號/名稱」、「股數」以及「價格/成本」時，判定為真正表頭
+    if ((sIdx >= 0 || nIdx >= 0) && qIdx >= 0 && (pIdx >= 0 || cIdx >= 0)) {
+      headerRowIdx = r;
+      symIdx = sIdx;
+      nameIdx = nIdx;
+      qtyIdx = qIdx;
+      unitPriceIdx = pIdx;
+      totalCostIdx = cIdx;
+      curPriceIdx = curIdx;
+      mValIdx = mvIdx;
+      dateIdx = row.findIndex((h) => h.includes("date") || h.includes("日期") || h.includes("成交日") || h.includes("委託日") || h.includes("時間"));
+      typeIdx = row.findIndex((h) => h.includes("買賣別") || h.includes("動作") || (h.includes("買賣") && !h.includes("價")));
+      feeIdx = row.findIndex((h) => h.includes("fee") || h.includes("手續費") || h.includes("費用") || h.includes("稅"));
+
+      if (row[qIdx].includes("張")) isLotUnit = true;
+      break;
+    }
+  }
+
+  if (headerRowIdx === -1) {
+    return null;
+  }
 
   const state = {
     accounts: [],
@@ -166,72 +343,230 @@ export function parseCsvBackup(csvText) {
     openingBalances: {},
   };
 
-  const header = rows[0].map((c) => c.toLowerCase());
+  const headerRow = rows[headerRowIdx].map((c) => String(c || "").trim().toLowerCase());
+  
+  const hasHoldingsKeyword = headerRow.some((h) => h.includes("庫存") || h.includes("持股") || h.includes("現有") || h.includes("未實現") || h.includes("損益") || h.includes("現值"));
+  const isHoldingsSnapshot = hasHoldingsKeyword || (typeIdx === -1 && headerRow.some((h) => h.includes("成本") || h.includes("均價")));
+  let lastValidDate = new Date().toISOString().slice(0, 10);
+
+  // 乾淨過濾表尾統計列
+  function isGarbageRow(sText, nText) {
+    const combined = `${sText} ${nText}`.toLowerCase();
+    return (
+      (!sText && !nText) ||
+      /合計|小計|總計|總額|總預估|總現值|總融資|總利息|總損益|總成本|總報酬率|注意事項|備註|說明|製表|列印|客戶|帳號|免責/i.test(combined)
+    );
+  }
+
+  const dataRows = rows.slice(headerRowIdx + 1);
+
+  // -------------------------------------------------------------
+  // A. 處理「庫存總表快照（純股名自動反查代號）」
+  // -------------------------------------------------------------
+  if (isHoldingsSnapshot) {
+    for (const row of dataRows) {
+      const rawSym = symIdx >= 0 ? String(row[symIdx] || "").trim() : "";
+      const rawName = nameIdx >= 0 ? String(row[nameIdx] || "").trim() : "";
+      if (isGarbageRow(rawSym, rawName)) continue;
+
+      const resolved = resolveStockIdentity(rawSym, rawName);
+      if (!resolved || !resolved.symbol) continue;
+
+      let shares = cleanNumber(row[qtyIdx]);
+      if (isLotUnit && shares < 100) shares *= 1000;
+      if (shares <= 0) continue;
+
+      let unitPrice = unitPriceIdx >= 0 ? cleanNumber(row[unitPriceIdx]) : 0;
+      let totalCost = totalCostIdx >= 0 ? cleanNumber(row[totalCostIdx]) : 0;
+
+      // 付出成本優先；若無付出成本，由 均價 * 股數 計算
+      if (totalCost === 0 && unitPrice > 0) totalCost = unitPrice * shares;
+      // 若有付出成本但無均價，由 付出成本 / 股數 計算
+      if (unitPrice === 0 && totalCost > 0 && shares > 0) unitPrice = totalCost / shares;
+
+      // 市價優先；若無市價，由 現值 / 股數 計算；若仍無則以均價兜底
+      let currentPrice = curPriceIdx >= 0 ? cleanNumber(row[curPriceIdx]) : 0;
+      if (currentPrice === 0 && mValIdx >= 0 && shares > 0) {
+        currentPrice = cleanNumber(row[mValIdx]) / shares;
+      }
+      if (currentPrice === 0) currentPrice = unitPrice;
+
+      const rowDate = dateIdx >= 0 && row[dateIdx] ? normalizeDate(row[dateIdx], lastValidDate) : lastValidDate;
+      lastValidDate = rowDate;
+
+      state.holdings.push({
+        id: safeId(),
+        accountId: DEFAULT_ACCOUNT_ID,
+        symbol: resolved.symbol,
+        name: resolved.name,
+        market: resolved.market,
+        currency: resolved.market === "US" ? "USD" : resolved.market === "CA" ? "CAD" : "TWD",
+        buyDate: rowDate,
+        shares,
+        costBasis: totalCost,
+        currentPrice: currentPrice || unitPrice,
+        dailyChangePerShare: null,
+        fees: 0,
+        realizedProfit: 0,
+        dividends: 0,
+        custom: {},
+        updatedAt: null,
+      });
+
+      state.transactions.push({
+        id: safeId(),
+        accountId: DEFAULT_ACCOUNT_ID,
+        type: "buy",
+        symbol: resolved.symbol,
+        name: resolved.name,
+        market: resolved.market,
+        date: rowDate,
+        quantity: shares,
+        price: unitPrice,
+        fee: Math.max(0, totalCost - (unitPrice * shares)),
+        locked: true,
+      });
+    }
+
+    const imported = normalizeImportedState(state);
+    imported._isExternalTable = true;
+    imported._isHoldingsSnapshot = true;
+    return imported;
+  }
+
+  // -------------------------------------------------------------
+  // B. 處理「歷史交易明細紀錄」
+  // -------------------------------------------------------------
+  for (const row of dataRows) {
+    const rawSym = symIdx >= 0 ? String(row[symIdx] || "").trim() : "";
+    const rawName = nameIdx >= 0 ? String(row[nameIdx] || "").trim() : "";
+    if (isGarbageRow(rawSym, rawName)) continue;
+
+    const resolved = resolveStockIdentity(rawSym, rawName);
+    if (!resolved || !resolved.symbol) continue;
+
+    const rawType = typeIdx >= 0 ? String(row[typeIdx] || "").trim() : "";
+    const isSell = /賣|sell|s|券賣|資賣/i.test(rawType);
+    const fee = feeIdx >= 0 ? cleanNumber(row[feeIdx]) : 0;
+    let qty = cleanNumber(row[qtyIdx]);
+    if (isLotUnit && qty < 100) qty *= 1000;
+    if (qty <= 0) continue;
+
+    let price = unitPriceIdx >= 0 ? cleanNumber(row[unitPriceIdx]) : 0;
+    if (price === 0 && totalCostIdx >= 0 && qty > 0) {
+      price = cleanNumber(row[totalCostIdx]) / qty;
+    }
+
+    const rowDate = (dateIdx >= 0 && row[dateIdx]) ? normalizeDate(row[dateIdx], lastValidDate) : lastValidDate;
+    lastValidDate = rowDate;
+
+    state.transactions.push({
+      id: safeId(),
+      accountId: DEFAULT_ACCOUNT_ID,
+      type: isSell ? "sell" : "buy",
+      symbol: resolved.symbol,
+      name: resolved.name,
+      market: resolved.market,
+      date: rowDate,
+      quantity: qty,
+      price,
+      fee,
+    });
+  }
+
+  if (state.transactions.length > 0) {
+    const holdingsMap = new Map();
+    const sortedTx = [...state.transactions].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+    for (const tx of sortedTx) {
+      const key = `${tx.accountId}:${tx.market}:${tx.symbol}`;
+      let holding = holdingsMap.get(key);
+      if (!holding) {
+        holding = {
+          id: safeId(),
+          accountId: tx.accountId || DEFAULT_ACCOUNT_ID,
+          symbol: tx.symbol,
+          name: tx.name || tx.symbol,
+          market: tx.market,
+          currency: tx.market === "US" ? "USD" : tx.market === "CA" ? "CAD" : "TWD",
+          buyDate: tx.date || new Date().toISOString().slice(0, 10),
+          shares: 0,
+          costBasis: 0,
+          currentPrice: tx.price || 0,
+          dailyChangePerShare: null,
+          fees: 0,
+          realizedProfit: 0,
+          dividends: 0,
+          custom: {},
+          updatedAt: null,
+        };
+        holdingsMap.set(key, holding);
+      }
+      applyTransactionSafely(holding, tx);
+    }
+    state.holdings = Array.from(holdingsMap.values()).filter((h) => h.shares > 0);
+  }
+
+  const imported = normalizeImportedState(state);
+  imported._isExternalTable = true;
+  imported._isHoldingsSnapshot = false;
+  return imported;
+}
+
+function parseOfficialCsv(rows, startIdx) {
+  const state = {
+    accounts: [],
+    holdings: [],
+    transactions: [],
+    customFields: [],
+    settings: {},
+    openingBalances: {},
+  };
+
+  const header = rows[startIdx].map((c) => String(c || "").trim().toLowerCase());
   const typeIdx = header.indexOf("record_type");
 
-  // 1. 若為鮮存股標準導出格式
-  if (typeIdx >= 0) {
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i];
-      const recType = row[typeIdx];
-      const dataCol = row[17];
+  for (let i = startIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    const recType = row[typeIdx];
+    const dataCol = row[17];
 
-      try {
-        if (recType === "account" && dataCol) {
-          state.accounts.push(JSON.parse(dataCol));
-        } else if (recType === "holding" && dataCol) {
-          state.holdings.push(JSON.parse(dataCol));
-        } else if (recType === "transaction" && dataCol) {
-          state.transactions.push(JSON.parse(dataCol));
-        } else if (recType === "custom_field") {
-          state.customFields.push({ id: row[2], name: row[4] });
-        } else if (recType === "setting") {
-          state.settings[row[2]] = row[17];
-        } else if (recType === "opening_balance" && dataCol) {
-          state.openingBalances[row[2]] = JSON.parse(dataCol);
-        }
-      } catch (e) {
-        console.warn("略過格式損壞之 CSV 行:", row);
+    try {
+      if (recType === "account" && dataCol) {
+        state.accounts.push(JSON.parse(dataCol));
+      } else if (recType === "holding" && dataCol) {
+        const h = JSON.parse(dataCol);
+        const resolved = resolveStockIdentity(h.symbol, h.name);
+        if (resolved.name && (!h.name || h.name === h.symbol)) h.name = resolved.name;
+        h.buyDate = normalizeDate(h.buyDate);
+        state.holdings.push(h);
+      } else if (recType === "transaction" && dataCol) {
+        const t = JSON.parse(dataCol);
+        const resolved = resolveStockIdentity(t.symbol, t.name);
+        if (resolved.name && (!t.name || t.name === t.symbol)) t.name = resolved.name;
+        t.date = normalizeDate(t.date);
+        state.transactions.push(t);
+      } else if (recType === "custom_field") {
+        state.customFields.push({ id: row[2], name: row[4] });
+      } else if (recType === "setting") {
+        state.settings[row[2]] = row[17];
+      } else if (recType === "opening_balance" && dataCol) {
+        state.openingBalances[row[2]] = JSON.parse(dataCol);
       }
-    }
-  } else {
-    // 2. 外部通用交易明細 CSV（欄位：日期, 代號, 類別, 股數, 價格, 手續費）
-    const dateIdx = header.findIndex((h) => h.includes("date") || h.includes("日期"));
-    const symIdx = header.findIndex((h) => h.includes("symbol") || h.includes("代號") || h.includes("代碼"));
-    const qtyIdx = header.findIndex((h) => h.includes("quantity") || h.includes("shares") || h.includes("股數"));
-    const priceIdx = header.findIndex((h) => h.includes("price") || h.includes("價格") || h.includes("單價"));
-    const typeColIdx = header.findIndex((h) => h.includes("type") || h.includes("類型") || h.includes("類別"));
-
-    if (symIdx >= 0 && qtyIdx >= 0 && priceIdx >= 0) {
-      for (let i = 1; i < rows.length; i++) {
-        const row = rows[i];
-        const symbol = String(row[symIdx] || "").trim().toUpperCase();
-        if (!symbol) continue;
-        const market = /\.(TO|V|CN|NE)$/i.test(symbol) ? "CA" : /\.(TW|TWO)$/i.test(symbol) || /^\d+$/.test(symbol) ? "TW" : "US";
-        state.transactions.push({
-          id: crypto.randomUUID(),
-          accountId: DEFAULT_ACCOUNT_ID,
-          type: (typeColIdx >= 0 && String(row[typeColIdx]).includes("賣")) ? "sell" : "buy",
-          symbol: market === "TW" && !/\.(TW|TWO)$/i.test(symbol) ? `${symbol}.TW` : symbol,
-          name: symbol,
-          market,
-          date: dateIdx >= 0 && row[dateIdx] ? row[dateIdx] : new Date().toISOString().slice(0, 10),
-          quantity: Math.max(0, Number(row[qtyIdx]) || 0),
-          price: Math.max(0, Number(row[priceIdx]) || 0),
-          fee: 0,
-        });
-      }
-    } else {
-      throw new Error("無法識別此 CSV 欄位格式，請確保含有股票代號、股數與價格欄位。");
+    } catch (e) {
+      console.warn("略過格式損壞之 CSV 行:", row);
     }
   }
 
   return normalizeImportedState(state);
 }
 
-// ============================================================================
-// 3. Excel (XLS / XLSX) 序列化與反向解析（依賴全域 SheetJS 函式庫）
-// ============================================================================
+export function parseCsvBackup(csvText) {
+  const rows = parseCsvRows(csvText);
+  const result = parseBrokerTableRows(rows);
+  if (!result) throw new Error("無法識別此檔案欄位格式，請確保含有股票代號（或名稱）、股數以及價格（或金額）欄位。");
+  return result;
+}
+
 export function serializeExcel(state) {
   if (typeof window.XLSX === "undefined") {
     throw new Error("尚未載入 Excel (SheetJS) 模組，請稍後重試或確認網路連線。");
@@ -239,7 +574,6 @@ export function serializeExcel(state) {
 
   const wb = window.XLSX.utils.book_new();
 
-  // (1) 庫存分頁
   const holdingsData = [
     ["帳戶ID", "股票代號", "股票名稱", "市場", "持有股數", "總投資成本", "目前現價", "累計股息", "累計手續費", "首次買入日"],
     ...state.holdings.map((h) => [
@@ -248,7 +582,6 @@ export function serializeExcel(state) {
   ];
   window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.aoa_to_sheet(holdingsData), "我的庫存");
 
-  // (2) 交易分頁
   const transactionsData = [
     ["帳戶ID", "交易日期", "交易類型", "股票代號", "名稱", "市場", "股數", "單價", "手續費", "分割比例"],
     ...state.transactions.map((t) => [
@@ -257,14 +590,12 @@ export function serializeExcel(state) {
   ];
   window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.aoa_to_sheet(transactionsData), "交易紀錄");
 
-  // (3) 帳戶分頁
   const accountsData = [
     ["帳戶ID", "帳戶名稱", "標籤顏色"],
     ...(state.accounts || []).map((a) => [a.id, a.name, a.color]),
   ];
   window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.aoa_to_sheet(accountsData), "投資帳戶");
 
-  // (4) 無損還原系統底表（將 JSON 完整隱藏存於底表）
   const systemData = [
     ["_XIAN_STOCK_BACKUP_RAW_JSON_"],
     [serializeBackup(state)],
@@ -282,7 +613,6 @@ export function parseExcelBackup(arrayBuffer) {
 
   const wb = window.XLSX.read(arrayBuffer, { type: "array" });
 
-  // 1. 優先檢查是否包含無損系統還原底表
   if (wb.Sheets["_SystemState"]) {
     const cellValue = wb.Sheets["_SystemState"]["A2"] ? wb.Sheets["_SystemState"]["A2"].v : null;
     if (cellValue) {
@@ -290,8 +620,76 @@ export function parseExcelBackup(arrayBuffer) {
     }
   }
 
-  // 2. 反向解析由使用者或外部編輯的標準 Excel 分頁
-  const state = {
+  if (wb.Sheets["我的庫存"] || wb.Sheets["交易紀錄"]) {
+    const state = {
+      accounts: [],
+      holdings: [],
+      transactions: [],
+      customFields: [],
+      settings: {},
+      openingBalances: {},
+    };
+
+    if (wb.Sheets["投資帳戶"]) {
+      const accRows = window.XLSX.utils.sheet_to_json(wb.Sheets["投資帳戶"]);
+      accRows.forEach((r) => {
+        if (r["帳戶名稱"]) state.accounts.push({ id: String(r["帳戶ID"] || safeId()), name: String(r["帳戶名稱"]), color: r["標籤顏色"] || "#418874" });
+      });
+    }
+
+    if (wb.Sheets["交易紀錄"]) {
+      const txRows = window.XLSX.utils.sheet_to_json(wb.Sheets["交易紀錄"]);
+      txRows.forEach((r) => {
+        const rawSym = r["股票代號"] || "";
+        const rawName = r["名稱"] || "";
+        if (rawSym || rawName) {
+          const resolved = resolveStockIdentity(rawSym, rawName);
+          state.transactions.push({
+            id: safeId(),
+            accountId: String(r["帳戶ID"] || DEFAULT_ACCOUNT_ID),
+            type: r["交易類型"] || "buy",
+            symbol: resolved.symbol,
+            name: resolved.name,
+            market: resolved.market,
+            date: normalizeDate(r["交易日期"]),
+            quantity: cleanNumber(r["股數"]),
+            price: cleanNumber(r["單價"]),
+            fee: cleanNumber(r["手續費"]),
+            ratio: cleanNumber(r["分割比例"]),
+          });
+        }
+      });
+    }
+
+    if (wb.Sheets["我的庫存"]) {
+      const hRows = window.XLSX.utils.sheet_to_json(wb.Sheets["我的庫存"]);
+      hRows.forEach((r) => {
+        const rawSym = r["股票代號"] || "";
+        const rawName = r["股票名稱"] || "";
+        const shares = cleanNumber(r["持有股數"]);
+        if ((rawSym || rawName) && shares > 0) {
+          const resolved = resolveStockIdentity(rawSym, rawName);
+          state.holdings.push({
+            id: safeId(),
+            accountId: String(r["帳戶ID"] || DEFAULT_ACCOUNT_ID),
+            symbol: resolved.symbol,
+            name: resolved.name,
+            market: resolved.market,
+            shares,
+            costBasis: cleanNumber(r["總投資成本"]),
+            currentPrice: cleanNumber(r["目前現價"]),
+            dividends: cleanNumber(r["累計股息"]),
+            fees: cleanNumber(r["累計手續費"]),
+            buyDate: normalizeDate(r["首次買入日"]),
+          });
+        }
+      });
+    }
+
+    return normalizeImportedState(state);
+  }
+
+  const aggregatedState = {
     accounts: [],
     holdings: [],
     transactions: [],
@@ -299,61 +697,31 @@ export function parseExcelBackup(arrayBuffer) {
     settings: {},
     openingBalances: {},
   };
+  let parsedAnySheet = false;
 
-  // 解析帳戶
-  if (wb.Sheets["投資帳戶"]) {
-    const accRows = window.XLSX.utils.sheet_to_json(wb.Sheets["投資帳戶"]);
-    accRows.forEach((r) => {
-      if (r["帳戶名稱"]) state.accounts.push({ id: String(r["帳戶ID"] || crypto.randomUUID()), name: String(r["帳戶名稱"]), color: r["標籤顏色"] || "#418874" });
-    });
-  }
+  for (const sheetName of wb.SheetNames) {
+    const sheet = wb.Sheets[sheetName];
+    if (!sheet || !sheet["!ref"]) continue;
 
-  // 解析交易紀錄
-  if (wb.Sheets["交易紀錄"]) {
-    const txRows = window.XLSX.utils.sheet_to_json(wb.Sheets["交易紀錄"]);
-    txRows.forEach((r) => {
-      if (r["股票代號"]) {
-        const sym = String(r["股票代號"]).trim().toUpperCase();
-        const market = r["市場"] || (/\.(TO|V|CN|NE)$/i.test(sym) ? "CA" : /\.(TW|TWO)$/i.test(sym) || /^\d+$/.test(sym) ? "TW" : "US");
-        state.transactions.push({
-          id: crypto.randomUUID(),
-          accountId: String(r["帳戶ID"] || DEFAULT_ACCOUNT_ID),
-          type: r["交易類型"] || "buy",
-          symbol: sym,
-          name: String(r["名稱"] || sym),
-          market,
-          date: String(r["交易日期"] || new Date().toISOString().slice(0, 10)),
-          quantity: Math.max(0, Number(r["股數"]) || 0),
-          price: Math.max(0, Number(r["單價"]) || 0),
-          fee: Math.max(0, Number(r["手續費"]) || 0),
-          ratio: Number(r["分割比例"]) || 0,
-        });
+    const rows = window.XLSX.utils.sheet_to_json(sheet, { header: 1 });
+    const partial = parseBrokerTableRows(rows);
+
+    if (partial) {
+      if (partial.holdings && partial.holdings.length > 0) {
+        aggregatedState.holdings.push(...partial.holdings);
       }
-    });
-  }
-
-  // 解析現有庫存
-  if (wb.Sheets["我的庫存"]) {
-    const hRows = window.XLSX.utils.sheet_to_json(wb.Sheets["我的庫存"]);
-    hRows.forEach((r) => {
-      if (r["股票代號"] && Number(r["持有股數"]) > 0) {
-        const sym = String(r["股票代號"]).trim().toUpperCase();
-        state.holdings.push({
-          id: crypto.randomUUID(),
-          accountId: String(r["帳戶ID"] || DEFAULT_ACCOUNT_ID),
-          symbol: sym,
-          name: String(r["股票名稱"] || sym),
-          market: r["市場"] || (/\.(TW|TWO)$/i.test(sym) || /^\d+$/.test(sym) ? "TW" : "US"),
-          shares: Number(r["持有股數"]) || 0,
-          costBasis: Number(r["總投資成本"]) || 0,
-          currentPrice: Number(r["目前現價"]) || 0,
-          dividends: Number(r["累計股息"]) || 0,
-          fees: Number(r["累計手續費"]) || 0,
-          buyDate: String(r["首次買入日"] || new Date().toISOString().slice(0, 10)),
-        });
+      if (partial.transactions && partial.transactions.length > 0) {
+        aggregatedState.transactions.push(...partial.transactions);
       }
-    });
+      parsedAnySheet = true;
+    }
   }
 
-  return normalizeImportedState(state);
+  if (!parsedAnySheet || (aggregatedState.holdings.length === 0 && aggregatedState.transactions.length === 0)) {
+    throw new Error("無法識別此 Excel 檔案欄位格式，請確保含有股票代號（或名稱）、股數以及價格（或金額）欄位。");
+  }
+
+  const finalState = normalizeImportedState(aggregatedState);
+  finalState._isExternalTable = true;
+  return finalState;
 }

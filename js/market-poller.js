@@ -1,9 +1,14 @@
 // js/market-poller.js - 行情報價定時輪詢、全市場批次刷新、Render 喚醒與 Page Visibility 螢幕監聽排程模組
-import { fetchQuote } from "./quotes.js";
+import { fetchQuote, getQuoteDataFromResponse, fetchOfficialMisQuote } from "./quotes.js";
 
-/**
- * 異步並行控制池
- */
+function chunkArray(array, size = 20) {
+  const chunks = [];
+  for (let i = 0; i < array.length; i += size) {
+    chunks.push(array.slice(i, i + size));
+  }
+  return chunks;
+}
+
 export async function mapWithConcurrency(items, concurrency, asyncFn) {
   const results = [];
   const executing = new Set();
@@ -20,16 +25,12 @@ export async function mapWithConcurrency(items, concurrency, asyncFn) {
   return Promise.all(results);
 }
 
-/**
- * 安全抓取單一股票行情並捕獲昨收價
- */
 export async function safeFetchQuoteUpdate(holding, settings) {
   try {
     const result = await fetchQuote(holding.symbol, undefined, settings);
     const price = result.price;
     const dailyChange = result.dailyChangePerShare;
     
-    // 自動反推或捕獲昨收價，確保 WebSocket 現價跳動時能即時推算日漲跌
     let prevClose = result.previousClose ?? null;
     if (prevClose === null && Number.isFinite(Number(dailyChange))) {
       prevClose = price - Number(dailyChange);
@@ -50,18 +51,7 @@ export async function safeFetchQuoteUpdate(holding, settings) {
   }
 }
 
-/**
- * 行情報價排程與喚醒管理器
- */
 export class MarketPoller {
-  /**
-   * @param {Object} options
-   * @param {Function} options.getState 獲取目前全域狀態
-   * @param {Function} options.persist 持久化儲存回調
-   * @param {Function} options.render 重新渲染回調
-   * @param {Object} options.usStream 美股 WebSocket 串流管理器實例
-   * @param {Function} options.toast 訊息提示回調
-   */
   constructor({ getState, persist, render, usStream, toast }) {
     this.getState = getState;
     this.persist = persist;
@@ -74,19 +64,13 @@ export class MarketPoller {
     this.isRefreshingAll = false;
   }
 
-  /**
-   * 啟動所有排程器（台股 10s 輪詢、首次全刷、螢幕喚醒監聽）
-   */
   start() {
     this.startTwPolling();
     this.setupPageVisibilityListener();
     this.warmupBackend();
-    this.refreshAllQuotes({ silent: true }); // 啟動時首刷行情
+    this.refreshAllQuotes({ silent: true });
   }
 
-  /**
-   * 停止所有排程
-   */
   stop() {
     if (this.twPollTimer) {
       clearInterval(this.twPollTimer);
@@ -94,9 +78,6 @@ export class MarketPoller {
     }
   }
 
-  /**
-   * 背景輕量喚醒 Render 後端，避免冷啟動長時間無回應
-   */
   async warmupBackend() {
     try {
       const state = this.getState();
@@ -106,13 +87,9 @@ export class MarketPoller {
     } catch {}
   }
 
-  /**
-   * 註冊 Page Visibility API（手機螢幕解鎖或分頁喚醒自動補刷行情）
-   */
   setupPageVisibilityListener() {
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") {
-        // 螢幕解鎖或回到分頁，立刻喚醒美股 WebSocket 並補刷行情
         if (this.usStream) {
           this.usStream.connect();
         }
@@ -121,9 +98,6 @@ export class MarketPoller {
     });
   }
 
-  /**
-   * 啟動台股每 10 秒自動輪詢
-   */
   startTwPolling() {
     if (this.twPollTimer) clearInterval(this.twPollTimer);
     this.twPollTimer = setInterval(() => {
@@ -131,35 +105,41 @@ export class MarketPoller {
     }, 10000);
   }
 
-  /**
-   * 執行單次台股輪詢（直通後端 5 秒防禦快取）
-   */
   async pollTaiwanStocks() {
     if (this.isPolling) return;
     const state = this.getState();
     const activeTwHoldings = state.holdings.filter((h) => h.market === "TW" && Number(h.shares) > 0);
     if (!activeTwHoldings.length) return;
 
-    const codes = [...new Set(activeTwHoldings.map((h) => h.symbol.replace(/\.(TW|TWO)$/i, "")))].join(",");
-    if (!codes) return;
+    const allCodes = [...new Set(activeTwHoldings.map((h) => h.symbol.replace(/\.(TW|TWO)$/i, "")))];
+    if (!allCodes.length) return;
 
     this.isPolling = true;
     try {
       const rawApiUrl = state.settings.quoteApiUrl || "https://my-stock-api-nhaj.onrender.com/api/realtime";
-      const parsedUrl = new URL(rawApiUrl);
-      parsedUrl.searchParams.set("tw_codes", codes);
-      parsedUrl.searchParams.delete("us_symbols");
+      const codeChunks = chunkArray(allCodes, 20);
 
-      const response = await fetch(parsedUrl.toString());
-      if (!response.ok) return;
+      const chunkPromises = codeChunks.map(async (chunk) => {
+        const parsedUrl = new URL(rawApiUrl);
+        const expandedChunk = chunk.flatMap((c) => [c.toUpperCase(), c.toLowerCase()]);
+        parsedUrl.searchParams.set("tw_codes", [...new Set(expandedChunk)].join(","));
+        parsedUrl.searchParams.delete("us_symbols");
+        const res = await fetch(parsedUrl.toString());
+        if (!res.ok) return {};
+        const json = await res.json();
+        return json.tw || {};
+      });
 
-      const data = await response.json();
-      const twData = data.tw || {};
+      const chunkResults = await Promise.all(chunkPromises);
+      const mergedTwData = Object.assign({}, ...chunkResults);
+
       let hasChanged = false;
+      const missingHoldings = [];
 
       for (const holding of activeTwHoldings) {
         const code = holding.symbol.replace(/\.(TW|TWO)$/i, "");
-        const quote = twData[code];
+        const quote = getQuoteDataFromResponse(mergedTwData, code);
+
         if (quote && Number(quote.price) > 0) {
           holding.currentPrice = Number(quote.price);
           if (quote.name && (!holding.name || holding.name === holding.symbol)) {
@@ -175,6 +155,29 @@ export class MarketPoller {
           }
           holding.updatedAt = new Date().toISOString();
           hasChanged = true;
+        } else {
+          // Render API 沒有這檔股票（如 00937B、00942B、00631L），列入補查名單
+          missingHoldings.push(holding);
+        }
+      }
+
+      // 自動為 Render API 缺漏的標的啟用官方通道進行個別補查
+      if (missingHoldings.length > 0) {
+        const rescueResults = await mapWithConcurrency(missingHoldings, 3, (h) => safeFetchQuoteUpdate(h, state.settings));
+        for (const update of rescueResults) {
+          if (update.success && update.price > 0) {
+            const target = state.holdings.find((h) => h.id === update.id);
+            if (target) {
+              target.currentPrice = update.price;
+              target.dailyChangePerShare = update.dailyChangePerShare;
+              target.previousClose = update.previousClose ?? target.previousClose;
+              target.updatedAt = update.updatedAt;
+              if (update.name && (!target.name || target.name === target.symbol)) {
+                target.name = update.name;
+              }
+              hasChanged = true;
+            }
+          }
         }
       }
 
@@ -189,9 +192,6 @@ export class MarketPoller {
     }
   }
 
-  /**
-   * 全市場持倉行情批次刷新（支援手動點擊「↻」或首刷）
-   */
   async refreshAllQuotes({ silent = false } = {}) {
     if (this.isRefreshingAll) return;
     const state = this.getState();
@@ -211,6 +211,7 @@ export class MarketPoller {
     try {
       const quoteResults = await mapWithConcurrency(activeHoldings, 3, (h) => safeFetchQuoteUpdate(h, state.settings));
       let successCount = 0;
+
       for (const update of quoteResults) {
         if (update.success) {
           const target = state.holdings.find((h) => h.id === update.id);
@@ -233,10 +234,10 @@ export class MarketPoller {
       }
 
       if (!silent) {
-        if (successCount === activeHoldings.length) {
-          this.toast(`已成功更新 ${successCount} 檔股票最新行情。`);
+        if (successCount >= activeHoldings.length) {
+          this.toast(`已成功更新 ${activeHoldings.length} 檔股票最新行情。`);
         } else {
-          this.toast(`${successCount} / ${activeHoldings.length} 檔行情更新成功，其餘稍後自動重試。`, successCount === 0);
+          this.toast(`${successCount} / ${activeHoldings.length} 檔行情更新成功。`, successCount === 0);
         }
       }
     } catch (err) {
