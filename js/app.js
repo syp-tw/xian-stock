@@ -32,6 +32,15 @@ if (Array.isArray(state.settings.columnOrder) && state.settings.columnOrder.some
   saveState(state, storageMode);
 }
 
+// 🌟 自動為舊使用者無縫補入「當日漲跌 / 漲跌幅」欄位至「目前現價」後方（免重設、免重開網頁）
+if (Array.isArray(state.settings.columnOrder) && !state.settings.columnOrder.includes("dayChange")) {
+  const priceIdx = state.settings.columnOrder.indexOf("priceCost");
+  const insertIndex = priceIdx >= 0 ? priceIdx + 1 : 2;
+  state.settings.columnOrder.splice(insertIndex, 0, "dayChange");
+  state.settings.hiddenColumns = (state.settings.hiddenColumns || []).filter((id) => id !== "dayChange");
+  saveState(state, storageMode);
+}
+
 // 2. 清理持股為 0 的殘留標的
 const beforePurgeCount = state.holdings.length;
 state.holdings = state.holdings.filter((h) => Number(h.shares) > 0);
