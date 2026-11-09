@@ -17,6 +17,19 @@ export function getHoldingMetrics(holding) {
 
   const dailyProfit = dailyChange !== null ? dailyChange * shares : null;
 
+  // 動態反推前一交易日收盤價，精確計算漲跌幅 %
+  let prevClose = null;
+  if (holding.previousClose !== null && holding.previousClose !== undefined && Number(holding.previousClose) > 0) {
+    prevClose = Number(holding.previousClose);
+  } else if (dailyChange !== null && price > 0) {
+    prevClose = price - dailyChange;
+  }
+
+  let dailyChangeRate = null;
+  if (dailyChange !== null && prevClose && prevClose > 0) {
+    dailyChangeRate = (dailyChange / prevClose) * 100;
+  }
+
   let returnRate = 0;
   if (cost > 0) {
     returnRate = (profit / cost) * 100;
@@ -29,6 +42,8 @@ export function getHoldingMetrics(holding) {
     marketValue,
     profit,
     dailyProfit,
+    dailyChange,
+    dailyChangeRate,
     returnRate,
     averageCost: shares > 0 ? cost / shares : 0,
   };
@@ -63,7 +78,6 @@ export function getPortfolioMetrics(holdings, settings = {}) {
     sum.profit += metrics.profit * conversion;
     sum.dividends += dividends * conversion;
 
-    // 解決一票否決漏洞：只要該持倉有計算出日損益，就累加進總覽，不因單一標的缺失而清空整體總覽
     if (metrics.dailyProfit !== null) {
       sum.dailyProfit += metrics.dailyProfit * conversion;
       sum.hasAnyDailyProfit = true;

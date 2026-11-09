@@ -1,4 +1,4 @@
-// js/app.js - 核心主控調度模組（大幅瘦身重構，專注於全域狀態、表格渲染與匯入匯出協調）
+// js/app.js - 核心主控調度模組（專注於全域狀態、表格渲染與匯入匯出協調）
 import { getHoldingMetrics, getPortfolioMetrics } from "./calculations.js";
 import { 
   parseBackup, serializeBackup, serializeJsBackup, 
@@ -89,7 +89,6 @@ function replaceState(nextState, { syncCloud = true } = {}) {
     throw new Error("無法儲存匯入資料，原有資料未變更。");
   }
   if (storageMode === "cloud" && syncCloud) cloudSync.scheduleSave(storageMode);
-  // 🌟 加入 syncCloud 判斷：從試算表 Pull 資料進來時，不會在 3 秒後又立刻自動 Push 回去！
   if (storageMode === "google-sheet" && syncCloud) googleSheetSync.scheduleAutoSave();
   const langSetting = document.querySelector("#language-setting");
   if (langSetting) langSetting.value = state.settings.language;
@@ -191,7 +190,6 @@ const marketPoller = new MarketPoller({
   toast,
 });
 
-// 初始化 3 大抽離模組
 initBatchManager({
   state,
   persist,
@@ -273,6 +271,7 @@ function getSortedHoldings(holdings) {
     if (key === "symbol") return String(a.symbol).localeCompare(String(b.symbol)) * dir;
     if (key === "buyDate") return String(a.buyDate || "").localeCompare(String(b.buyDate || "")) * dir;
     if (key === "priceCost" || key === "currentPrice") { valA = a.currentPrice; valB = b.currentPrice; }
+    else if (key === "dayChange") { valA = metricsA.dailyChangeRate ?? -Infinity; valB = metricsB.dailyChangeRate ?? -Infinity; }
     else if (key === "averageCost") { valA = metricsA.averageCost; valB = metricsB.averageCost; }
     else if (key === "shares") { valA = a.shares; valB = b.shares; }
     else if (key === "fees") { valA = a.fees; valB = b.fees; }
@@ -435,6 +434,39 @@ function makeHoldingRow(holding, activeColumns) {
       const bottom = document.createElement("div");
       bottom.className = "compound-bottom muted";
       bottom.textContent = formatMoney(metrics.averageCost, holding.market, 2, state.settings.language);
+      cell.append(top, bottom);
+      row.append(cell);
+    } else if (col.id === "dayChange") {
+      // 🌟 新增：當日漲跌 / 漲跌幅 雙層整併欄位
+      const cell = document.createElement("td");
+      cell.className = "compound-cell";
+      const change = metrics.dailyChange;
+      const rate = metrics.dailyChangeRate;
+      const changeClass = change > 0 ? "gain" : change < 0 ? "loss" : "muted-value";
+
+      const top = document.createElement("div");
+      top.className = `compound-top ${changeClass}`;
+      if (change !== null && Number.isFinite(change)) {
+        const sign = change > 0 ? "+" : "";
+        top.textContent = `${sign}${formatMoney(change, holding.market, 2, state.settings.language)}`;
+      } else {
+        top.textContent = "—";
+      }
+
+      const bottom = document.createElement("div");
+      bottom.className = `compound-bottom ${changeClass}`;
+      if (rate !== null && Number.isFinite(rate)) {
+        const sign = rate > 0 ? "+" : "";
+        bottom.textContent = `${sign}${rate.toFixed(2)}%`;
+      } else {
+        bottom.textContent = "—";
+      }
+
+      if (metrics.dailyProfit !== null && Number.isFinite(metrics.dailyProfit)) {
+        const profitSign = metrics.dailyProfit > 0 ? "+" : "";
+        cell.title = translateText(`當日損益: ${profitSign}${formatMoney(metrics.dailyProfit, holding.market, 2, state.settings.language)}`, state.settings.language);
+      }
+
       cell.append(top, bottom);
       row.append(cell);
     } else if (col.id === "profitRate") {
@@ -783,7 +815,6 @@ document.querySelector("#import-file-unified")?.addEventListener("change", async
     const currentTxCount = state.transactions.length;
     const isExternal = Boolean(imported._isExternalTable);
 
-    // 存在舊資料時詢問追加或覆蓋
     if ((currentHoldingsCount > 0 || currentTxCount > 0) && isExternal) {
       const promptText = translateText(
         `偵測到您目前已有持倉或交易紀錄。\n\n【確定】：追加補記錄（將新資料併入現有帳本）\n【取消】：全新覆蓋（清除現有資料，以此檔案為主）`,
@@ -838,7 +869,6 @@ document.querySelector("#import-file-unified")?.addEventListener("change", async
       }
     }
 
-    // 全新取代覆蓋
     replaceState(imported);
     marketPoller.refreshAllQuotes({ silent: true });
 
@@ -920,7 +950,6 @@ document.querySelector("#us-stream-mode-toggle")?.addEventListener("click", () =
   toast(`已切換為美股 ${nextMode === "geek" ? "極客模式 (24H Ticks)" : "標準模式 (常規盤 5s 節流)"}`);
 });
 
-// 側欄錨點捲動
 document.querySelectorAll(".nav-item[href]").forEach((link) => link.addEventListener("click", (event) => {
   event.preventDefault();
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.remove("active"));
@@ -937,7 +966,6 @@ document.querySelectorAll(".nav-item[href]").forEach((link) => link.addEventList
   }
 }));
 
-// 共用檔案與系統啟動
 document.querySelector("#shared-file-open")?.addEventListener("click", () => cloudSync.runAction(() => cloudSync.selectAndLoadFile(storageMode), storageMode));
 document.querySelector("#shared-folder-select")?.addEventListener("click", () => {
   let pickerPromise;

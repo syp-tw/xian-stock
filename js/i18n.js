@@ -119,6 +119,10 @@ const translations = {
   "更新所有報價": "Refresh all quotes",
   "股票代號 / 名稱": "Ticker / Name",
   "股票代號+名稱 / 股數": "Ticker & Name / Shares",
+  "目前現價 / 平均買入價": "Price / Avg Cost",
+  "當日漲跌 / 漲跌幅": "Day Change / Change %",
+  "當日漲跌": "Day Change",
+  "漲跌幅": "Change %",
   "買入日期": "Purchase Date",
   "平均買入價": "Avg. Cost",
   "持有股數": "Shares",
@@ -224,7 +228,6 @@ const translations = {
   "一般設定": "General",
 
   // 雙層整併欄位標題
-  "目前現價 / 平均買入價": "Price / Avg Cost",
   "帳面損益 / 報酬率": "Unrealized P/L / Return",
   "目前市值 / 投資本金": "Market Value / Cost Basis",
 
