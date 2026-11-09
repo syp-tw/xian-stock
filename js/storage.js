@@ -10,11 +10,12 @@ export const DEFAULT_ACCOUNTS = [
   { id: DEFAULT_ACCOUNT_ID, name: "主要帳戶", color: "#418874" }
 ];
 
-// 🌟 雙層整併欄位定義：於「目前現價 / 平均買入價」後方正式新增「當日漲跌 / 漲跌幅」
+// 🌟 雙層整併欄位定義：在「當日漲跌 / 漲跌幅」後方加入「持股日損益 / 持股日損益漲跌幅」
 export const BASE_COLUMNS = [
   { id: "symbol", label: "股票代號+名稱 / 股數", locked: true },
   { id: "priceCost", label: "目前現價 / 平均買入價" },
   { id: "dayChange", label: "當日漲跌 / 漲跌幅" },
+  { id: "holdingDailyProfit", label: "持股日損益 / 持股日損益漲跌幅" },
   { id: "profitRate", label: "帳面損益 / 報酬率" },
   { id: "marketValueCost", label: "目前市值 / 投資本金" },
   { id: "dividends", label: "累計股息" },
@@ -46,6 +47,7 @@ export const DEFAULT_SETTINGS = {
     "symbol",
     "priceCost",
     "dayChange",
+    "holdingDailyProfit",
     "profitRate",
     "marketValueCost",
     "dividends",

@@ -32,12 +32,22 @@ if (Array.isArray(state.settings.columnOrder) && state.settings.columnOrder.some
   saveState(state, storageMode);
 }
 
-// 🌟 自動為舊使用者無縫補入「當日漲跌 / 漲跌幅」欄位至「目前現價」後方（免重設、免重開網頁）
+// 🌟 自動為舊使用者無縫補入「當日漲跌 / 漲跌幅」欄位
 if (Array.isArray(state.settings.columnOrder) && !state.settings.columnOrder.includes("dayChange")) {
   const priceIdx = state.settings.columnOrder.indexOf("priceCost");
   const insertIndex = priceIdx >= 0 ? priceIdx + 1 : 2;
   state.settings.columnOrder.splice(insertIndex, 0, "dayChange");
   state.settings.hiddenColumns = (state.settings.hiddenColumns || []).filter((id) => id !== "dayChange");
+  saveState(state, storageMode);
+}
+
+// 🌟 自動為舊使用者無縫補入「持股日損益 / 持股日損益漲跌幅」欄位至 dayChange 後方
+if (Array.isArray(state.settings.columnOrder) && !state.settings.columnOrder.includes("holdingDailyProfit")) {
+  const dayChangeIdx = state.settings.columnOrder.indexOf("dayChange");
+  const priceIdx = state.settings.columnOrder.indexOf("priceCost");
+  const insertIndex = dayChangeIdx >= 0 ? dayChangeIdx + 1 : (priceIdx >= 0 ? priceIdx + 2 : 3);
+  state.settings.columnOrder.splice(insertIndex, 0, "holdingDailyProfit");
+  state.settings.hiddenColumns = (state.settings.hiddenColumns || []).filter((id) => id !== "holdingDailyProfit");
   saveState(state, storageMode);
 }
 
@@ -281,6 +291,7 @@ function getSortedHoldings(holdings) {
     if (key === "buyDate") return String(a.buyDate || "").localeCompare(String(b.buyDate || "")) * dir;
     if (key === "priceCost" || key === "currentPrice") { valA = a.currentPrice; valB = b.currentPrice; }
     else if (key === "dayChange") { valA = metricsA.dailyChangeRate ?? -Infinity; valB = metricsB.dailyChangeRate ?? -Infinity; }
+    else if (key === "holdingDailyProfit") { valA = metricsA.dailyProfit ?? -Infinity; valB = metricsB.dailyProfit ?? -Infinity; }
     else if (key === "averageCost") { valA = metricsA.averageCost; valB = metricsB.averageCost; }
     else if (key === "shares") { valA = a.shares; valB = b.shares; }
     else if (key === "fees") { valA = a.fees; valB = b.fees; }
@@ -446,7 +457,7 @@ function makeHoldingRow(holding, activeColumns) {
       cell.append(top, bottom);
       row.append(cell);
     } else if (col.id === "dayChange") {
-      // 🌟 新增：當日漲跌 / 漲跌幅 雙層整併欄位
+      // 當日每股價格漲跌 / 標的漲跌幅 %
       const cell = document.createElement("td");
       cell.className = "compound-cell";
       const change = metrics.dailyChange;
@@ -471,9 +482,32 @@ function makeHoldingRow(holding, activeColumns) {
         bottom.textContent = "—";
       }
 
-      if (metrics.dailyProfit !== null && Number.isFinite(metrics.dailyProfit)) {
-        const profitSign = metrics.dailyProfit > 0 ? "+" : "";
-        cell.title = translateText(`當日損益: ${profitSign}${formatMoney(metrics.dailyProfit, holding.market, 2, state.settings.language)}`, state.settings.language);
+      cell.append(top, bottom);
+      row.append(cell);
+    } else if (col.id === "holdingDailyProfit") {
+      // 🌟 新增：持股日損益總額 / 持股日損益漲跌幅 %
+      const cell = document.createElement("td");
+      cell.className = "compound-cell";
+      const dailyProfit = metrics.dailyProfit;
+      const rate = metrics.dailyChangeRate;
+      const profitClass = dailyProfit > 0 ? "gain" : dailyProfit < 0 ? "loss" : "muted-value";
+
+      const top = document.createElement("div");
+      top.className = `compound-top ${profitClass}`;
+      if (dailyProfit !== null && Number.isFinite(dailyProfit)) {
+        const sign = dailyProfit > 0 ? "+" : "";
+        top.textContent = `${sign}${formatMoney(dailyProfit, holding.market, 2, state.settings.language)}`;
+      } else {
+        top.textContent = "—";
+      }
+
+      const bottom = document.createElement("div");
+      bottom.className = `compound-bottom ${profitClass}`;
+      if (rate !== null && Number.isFinite(rate)) {
+        const sign = rate > 0 ? "+" : "";
+        bottom.textContent = `${sign}${rate.toFixed(2)}%`;
+      } else {
+        bottom.textContent = "—";
       }
 
       cell.append(top, bottom);
