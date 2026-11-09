@@ -2,25 +2,37 @@
 import { translateText, applyTranslations } from "./i18n.js";
 import { saveStorageMode, loadState } from "./storage.js";
 
-const GOOGLE_APPS_SCRIPT_TEMPLATE = `// 鮮存股 - 個人 Google 試算表同步專用腳本
-function getOrCreateSheet() {
+// 🌟 優化版 Google Apps Script 腳本：突破 5 萬字儲存格上限 + 毫秒級批次寫入
+const GOOGLE_APPS_SCRIPT_TEMPLATE = `// 鮮存股 - 個人 Google 試算表同步專用腳本（高效穩定版）
+function getOrCreateSheet(name, isHidden) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName("_xian_stock_db");
+  var sheet = ss.getSheetByName(name);
   if (!sheet) {
-    sheet = ss.insertSheet("_xian_stock_db");
-    sheet.hideSheet();
+    sheet = ss.insertSheet(name);
+    if (isHidden) sheet.hideSheet();
   }
   return sheet;
 }
 
 function doGet(e) {
   try {
-    var sheet = getOrCreateSheet();
-    var payload = sheet.getRange("A1").getValue();
-    if (!payload) {
+    var sheet = getOrCreateSheet("_xian_stock_db", true);
+    var lastRow = sheet.getLastRow();
+    if (lastRow === 0) {
       return ContentService.createTextOutput(JSON.stringify({ empty: true })).setMimeType(ContentService.MimeType.JSON);
     }
-    return ContentService.createTextOutput(payload).setMimeType(ContentService.MimeType.JSON);
+    
+    // 突破單元格 5 萬字元限制：逐行合併還原完整 JSON
+    var values = sheet.getRange(1, 1, lastRow, 1).getValues();
+    var fullPayload = "";
+    for (var i = 0; i < values.length; i++) {
+      fullPayload += values[i][0];
+    }
+    
+    if (!fullPayload) {
+      return ContentService.createTextOutput(JSON.stringify({ empty: true })).setMimeType(ContentService.MimeType.JSON);
+    }
+    return ContentService.createTextOutput(fullPayload).setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     return ContentService.createTextOutput(JSON.stringify({ error: err.toString() })).setMimeType(ContentService.MimeType.JSON);
   }
@@ -30,9 +42,22 @@ function doPost(e) {
   try {
     var postData = e.postData.contents;
     var parsed = JSON.parse(postData);
-    var sheet = getOrCreateSheet();
-    sheet.getRange("A1").setValue(JSON.stringify(parsed));
-    updateHumanReadableHoldings(parsed.data ? parsed.data.holdings : parsed.holdings);
+    var sheet = getOrCreateSheet("_xian_stock_db", true);
+    sheet.clear();
+
+    // 將 JSON 字串分段儲存，每段 4 萬字，避免單元格超過 5 萬字拋錯
+    var minified = JSON.stringify(parsed);
+    var chunkSize = 40000;
+    var chunks = [];
+    for (var i = 0; i < minified.length; i += chunkSize) {
+      chunks.push([minified.substring(i, i + chunkSize)]);
+    }
+    sheet.getRange(1, 1, chunks.length, 1).setValues(chunks);
+
+    // 更新人性化易讀報表
+    var holdingsData = parsed.data ? parsed.data.holdings : parsed.holdings;
+    updateHumanReadableHoldings(holdingsData);
+
     return ContentService.createTextOutput(JSON.stringify({ status: "success", updatedAt: new Date().toISOString() })).setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     return ContentService.createTextOutput(JSON.stringify({ status: "error", message: err.toString() })).setMimeType(ContentService.MimeType.JSON);
@@ -40,14 +65,29 @@ function doPost(e) {
 }
 
 function updateHumanReadableHoldings(holdings) {
-  if (!Array.isArray(holdings)) return;
+  if (!Array.isArray(holdings) || holdings.length === 0) return;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName("我的庫存總覽") || ss.insertSheet("我的庫存總覽");
   sheet.clear();
-  sheet.appendRow(["股票代號", "名稱", "市場", "持有股數", "總成本", "目前現價", "累計股息", "更新時間"]);
+
+  var rows = [["股票代號", "名稱", "市場", "持有股數", "總成本", "目前現價", "累計股息", "更新時間"]];
+  var nowStr = Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy-MM-dd HH:mm:ss");
+
   holdings.forEach(function(h) {
-    sheet.appendRow([h.symbol, h.name, h.market, h.shares, h.costBasis, h.currentPrice, h.dividends || 0, new Date()]);
+    rows.push([
+      h.symbol || "",
+      h.name || "",
+      h.market || "",
+      h.shares || 0,
+      h.costBasis || 0,
+      h.currentPrice || 0,
+      h.dividends || 0,
+      nowStr
+    ]);
   });
+
+  // 一次性批次寫入，避免逐行 appendRow 逾時
+  sheet.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
 }`;
 
 const numericSettingKeys = ["twRate", "twDiscount", "twMinimum", "usPerShare", "usMinimum", "fxRate", "caPerShare", "caMinimum", "cadFxRate"];
@@ -112,10 +152,23 @@ export function initSettingsDialog({
         toast("請先在偏好設定中填寫正確的 Google 試算表 Webhook 網址。", true);
         return;
       }
-      if (!saveStorageMode("google-sheet")) throw new Error("無法儲存儲存位置設定。");
-      setStorageMode("google-sheet");
-      await googleSheetSync.pushToGoogleSheet({ silent: false });
-      toast("已切換為 Google 試算表全平台雲端同步！後續變更自動同步。");
+
+      // 🌟 防呆防覆蓋邏輯：如果本機持股筆數為 0，詢問是否要從試算表 Pull，防止清空雲端！
+      const localHoldingsCount = (state.holdings || []).filter((h) => Number(h.shares) > 0).length;
+      if (localHoldingsCount === 0) {
+        const shouldPull = window.confirm("偵測到此裝置目前無持倉紀錄。是否立即從 Google 試算表載入 (Pull) 既有資料？\n\n【確定】：從雲端試算表載入\n【取消】：直接切換（請手動操作）");
+        if (!saveStorageMode("google-sheet")) throw new Error("無法儲存儲存位置設定。");
+        setStorageMode("google-sheet");
+        if (shouldPull) {
+          await googleSheetSync.pullFromGoogleSheet({ silent: false });
+        }
+        toast("已切換為 Google 試算表全平台雲端同步！後續變更自動同步。");
+      } else {
+        if (!saveStorageMode("google-sheet")) throw new Error("無法儲存儲存位置設定。");
+        setStorageMode("google-sheet");
+        await googleSheetSync.pushToGoogleSheet({ silent: false });
+        toast("已切換為 Google 試算表全平台雲端同步！資料已推送到試算表。");
+      }
     } else if (nextMode === "cloud") {
       if (!cloudSync.cloudFileReady || !cloudSync.sharedFileRecord?.handle) {
         document.querySelector("#storage-mode").value = previousMode;
@@ -230,7 +283,7 @@ export function initSettingsDialog({
     }, getStorageMode());
   });
 
-  // 複製 GAS 腳本
+  // 複製優化後的 GAS 腳本
   document.querySelector("#copy-gas-script-btn")?.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_TEMPLATE);

@@ -89,7 +89,8 @@ function replaceState(nextState, { syncCloud = true } = {}) {
     throw new Error("無法儲存匯入資料，原有資料未變更。");
   }
   if (storageMode === "cloud" && syncCloud) cloudSync.scheduleSave(storageMode);
-  if (storageMode === "google-sheet") googleSheetSync.scheduleAutoSave();
+  // 🌟 加入 syncCloud 判斷：從試算表 Pull 資料進來時，不會在 3 秒後又立刻自動 Push 回去！
+  if (storageMode === "google-sheet" && syncCloud) googleSheetSync.scheduleAutoSave();
   const langSetting = document.querySelector("#language-setting");
   if (langSetting) langSetting.value = state.settings.language;
   syncUsStreamSubscriptions();

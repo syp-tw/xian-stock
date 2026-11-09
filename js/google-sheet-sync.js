@@ -1,6 +1,5 @@
 // js/google-sheet-sync.js - Google 試算表 Webhook 雲端雙向同步模組（支援全平台 iOS/Android/PC）
 import { serializeBackup, parseBackup } from "./backup.js";
-import { saveState, loadState } from "./storage.js";
 
 export class GoogleSheetSyncManager {
   /**
@@ -75,11 +74,11 @@ export class GoogleSheetSyncManager {
       const state = this.getState();
       const payload = serializeBackup(state);
 
-      // Google Apps Script Web App 使用 POST 傳入 JSON
-      const response = await fetch(webhookUrl, {
+      // 🌟 關鍵修正：使用 text/plain;charset=utf-8 標頭，符合 no-cors 白名單，避免瀏覽器攔截拋錯
+      await fetch(webhookUrl, {
         method: "POST",
-        mode: "no-cors", // 配合 GAS 重定向機制，no-cors 能確保跨域發送成功
-        headers: { "Content-Type": "application/json" },
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: payload,
       });
 
@@ -128,6 +127,7 @@ export class GoogleSheetSyncManager {
       }
 
       const importedState = parseBackup(typeof raw === "string" ? raw : JSON.stringify(raw));
+      // 🌟 標記 syncCloud: false，載入後不自動反向觸發 Push
       this.onStateReplace(importedState, { syncCloud: false });
 
       if (!silent) this.toast("已從 Google 試算表載入最新資產紀錄！");
