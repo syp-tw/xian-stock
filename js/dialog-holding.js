@@ -1,4 +1,4 @@
-// js/dialog-holding.js - 持倉詳情、歷史交易明細刪改、庫存資料校正與自訂欄位模組
+// js/dialog-holding.js - 持倉詳情、歷史交易明細刪改、庫存資料校正與自訂欄位模組（含自動 PULL/PUSH 安全防護）
 import { getHoldingMetrics } from "./calculations.js";
 import { formatMoney, formatQuantity, locale, translateText, applyTranslations } from "./i18n.js";
 import { getAccountById } from "./ui-accounts.js";
@@ -9,7 +9,16 @@ import {
 } from "./ledger.js";
 import { DEFAULT_ACCOUNT_ID } from "./storage.js";
 
-export function initHoldingDialogs({ state, persist, render, toast, txDialog, syncUsStreamSubscriptions }) {
+export function initHoldingDialogs({
+  state,
+  persist,
+  render,
+  toast,
+  txDialog,
+  syncUsStreamSubscriptions,
+  onBeforeAction,
+  onAfterAction
+}) {
   let activeHoldingId = null;
 
   function detailsMetric(label, value, className = "") {
@@ -131,12 +140,14 @@ export function initHoldingDialogs({ state, persist, render, toast, txDialog, sy
     applyTranslations(state.settings.language);
   }
 
-  function deleteTransaction(holding, transaction) {
+  async function deleteTransaction(holding, transaction) {
     const typeLabel = translateText(locale.transactionLabels[transaction.type] || transaction.type, state.settings.language);
     const prompt = transaction.locked
       ? `${translateText("確定刪除舊版／校正明細", state.settings.language)}：${typeLabel}（${transaction.date}）？${translateText("目前持倉股數與成本不會變更。", state.settings.language)}`
       : `${translateText("確定刪除交易明細", state.settings.language)}：${typeLabel}（${transaction.date}）？`;
     if (!window.confirm(prompt)) return;
+
+    if (typeof onBeforeAction === "function") await onBeforeAction();
 
     const originalIndex = state.transactions.findIndex((item) => item.id === transaction.id);
     if (originalIndex < 0) return;
@@ -147,11 +158,14 @@ export function initHoldingDialogs({ state, persist, render, toast, txDialog, sy
       syncUsStreamSubscriptions();
       persist();
       render();
+
+      if (typeof onAfterAction === "function") await onAfterAction();
+
       if (updatedHolding && updatedHolding.shares > 0) openHoldingDetails(updatedHolding);
       else document.querySelector("#holding-details-dialog")?.close();
       toast(transaction.locked
-        ? "舊版／校正交易明細已刪除；目前持倉股數與成本未變更。"
-        : "交易明細已刪除，庫存成本已重新計算。");
+        ? "舊版／校正交易明細已刪除，並同步至雲端。"
+        : "交易明細已刪除，庫存已重算並同步至雲端。");
     } catch (error) {
       state.transactions.splice(originalIndex, 0, removed);
       const detailsErr = document.querySelector("#details-error");
@@ -160,7 +174,7 @@ export function initHoldingDialogs({ state, persist, render, toast, txDialog, sy
     }
   }
 
-  function deleteHolding(holding) {
+  async function deleteHolding(holding) {
     const resolvedName = getStockName(holding.symbol) || holding.name || holding.symbol;
     const holdingAccount = getAccountById(holding.accountId || DEFAULT_ACCOUNT_ID, state);
     
@@ -172,11 +186,13 @@ export function initHoldingDialogs({ state, persist, render, toast, txDialog, sy
     );
 
     const confirmMsg = translateText(
-      `確定刪除「${holdingAccount.name}」的 ${holding.symbol}（${resolvedName}）及其持倉資料？\n注意：此操作將一併徹底刪除 ${relatedTransactions.length} 筆關聯的歷史交易明細與期初紀錄，無法還原！`,
+      `確定刪除「${holdingAccount.name}」的 ${holding.symbol}（${resolvedName}）及其持倉資料？\n注意：此操作將一併刪除 ${relatedTransactions.length} 筆關聯的歷史交易明細，無法還原！`,
       state.settings.language
     );
 
     if (!window.confirm(confirmMsg)) return;
+
+    if (typeof onBeforeAction === "function") await onBeforeAction();
 
     state.holdings = state.holdings.filter((item) => item.id !== holding.id);
     state.transactions = state.transactions.filter(
@@ -192,7 +208,10 @@ export function initHoldingDialogs({ state, persist, render, toast, txDialog, sy
 
     persist();
     render();
-    toast(`${holding.symbol} 及其 ${relatedTransactions.length} 筆交易紀錄已徹底刪除。`);
+
+    if (typeof onAfterAction === "function") await onAfterAction();
+
+    toast(`${holding.symbol} 及其交易紀錄已徹底刪除，並已同步至雲端。`);
   }
 
   function openEditDialog(holding) {
@@ -244,7 +263,6 @@ export function initHoldingDialogs({ state, persist, render, toast, txDialog, sy
     toast(`「${field.name}」欄位已刪除。`);
   }
 
-  // 綁定編輯與自訂欄位表單提交
   document.querySelector("#details-add-transaction")?.addEventListener("click", () => {
     const holding = state.holdings.find((item) => item.id === activeHoldingId);
     if (!holding) return;
@@ -259,7 +277,7 @@ export function initHoldingDialogs({ state, persist, render, toast, txDialog, sy
     openEditDialog(holding);
   });
 
-  document.querySelector("#edit-form")?.addEventListener("submit", (event) => {
+  document.querySelector("#edit-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     const error = document.querySelector("#edit-error");
@@ -273,6 +291,8 @@ export function initHoldingDialogs({ state, persist, render, toast, txDialog, sy
         return;
       }
     }
+
+    if (typeof onBeforeAction === "function") await onBeforeAction();
 
     const holding = state.holdings.find((item) => item.id === form.elements.id?.value);
     if (!holding) return;
@@ -317,8 +337,11 @@ export function initHoldingDialogs({ state, persist, render, toast, txDialog, sy
     syncUsStreamSubscriptions();
     persist();
     render();
+
+    if (typeof onAfterAction === "function") await onAfterAction();
+
     document.querySelector("#edit-dialog")?.close();
-    toast("庫存資料已更新。");
+    toast("庫存資料已更新，並已同步至雲端。");
   });
 
   document.querySelector("#custom-field-form")?.addEventListener("submit", (event) => {

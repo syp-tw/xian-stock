@@ -10,7 +10,6 @@ export const DEFAULT_ACCOUNTS = [
   { id: DEFAULT_ACCOUNT_ID, name: "主要帳戶", color: "#418874" }
 ];
 
-// 🌟 雙層整併欄位定義：在「當日漲跌 / 漲跌幅」後方加入「持股日損益 / 持股日損益漲跌幅」
 export const BASE_COLUMNS = [
   { id: "symbol", label: "股票代號+名稱 / 股數", locked: true },
   { id: "priceCost", label: "目前現價 / 平均買入價" },
@@ -41,6 +40,7 @@ export const DEFAULT_SETTINGS = {
   finnhubToken: "",
   googleSheetWebhook: "",
   usStreamMode: "standard",
+  autoSyncOnTrade: true, // 🌟 預設啟用交易時自動 PULL & PUSH
   sortKey: "marketValueCost",
   sortDirection: "desc",
   columnOrder: [
@@ -203,6 +203,7 @@ export function normalizeImportedState(parsed) {
   settings.finnhubToken = typeof settings.finnhubToken === "string" ? settings.finnhubToken : DEFAULT_SETTINGS.finnhubToken;
   settings.googleSheetWebhook = typeof settings.googleSheetWebhook === "string" ? settings.googleSheetWebhook : DEFAULT_SETTINGS.googleSheetWebhook;
   settings.usStreamMode = settings.usStreamMode === "geek" ? "geek" : "standard";
+  settings.autoSyncOnTrade = parsed.settings?.autoSyncOnTrade !== false;
   settings.sortKey = typeof settings.sortKey === "string" ? settings.sortKey : DEFAULT_SETTINGS.sortKey;
   settings.sortDirection = settings.sortDirection === "asc" ? "asc" : "desc";
   settings.columnOrder = Array.isArray(settings.columnOrder) ? settings.columnOrder : DEFAULT_SETTINGS.columnOrder;
@@ -264,6 +265,7 @@ export function loadState(mode = "local") {
         finnhubToken: typeof parsed.settings?.finnhubToken === "string" ? parsed.settings.finnhubToken : DEFAULT_SETTINGS.finnhubToken,
         googleSheetWebhook: typeof parsed.settings?.googleSheetWebhook === "string" ? parsed.settings.googleSheetWebhook : DEFAULT_SETTINGS.googleSheetWebhook,
         usStreamMode: parsed.settings?.usStreamMode === "geek" ? "geek" : "standard",
+        autoSyncOnTrade: parsed.settings?.autoSyncOnTrade !== false,
         sortKey: parsed.settings?.sortKey || DEFAULT_SETTINGS.sortKey,
         sortDirection: parsed.settings?.sortDirection || DEFAULT_SETTINGS.sortDirection,
         columnOrder: Array.isArray(parsed.settings?.columnOrder) ? parsed.settings.columnOrder : DEFAULT_SETTINGS.columnOrder,
