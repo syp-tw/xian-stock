@@ -16,6 +16,7 @@ export function initHoldingDialogs({
   toast,
   txDialog,
   syncUsStreamSubscriptions,
+  getStorageMode,
   onBeforeAction,
   onAfterAction
 }) {
@@ -166,11 +167,15 @@ export function initHoldingDialogs({
 
       if (typeof onAfterAction === "function") await onAfterAction();
 
+      const currentMode = getStorageMode ? getStorageMode() : "local";
+      const isCloudMode = currentMode === "google-sheet" || currentMode === "cloud";
+      const syncSuffix = isCloudMode ? "，並已同步至雲端。" : "。";
+
       if (updatedHolding && updatedHolding.shares > 0) openHoldingDetails(updatedHolding);
       else document.querySelector("#holding-details-dialog")?.close();
       toast(transaction.locked
-        ? "舊版／校正交易明細已刪除，並同步至雲端。"
-        : "交易明細已刪除，庫存已重算並同步至雲端。");
+        ? `舊版／校正交易明細已刪除${syncSuffix}`
+        : `交易明細已刪除，庫存已重算${syncSuffix}`);
     } catch (error) {
       state.transactions.splice(originalIndex, 0, removed);
       const detailsErr = document.querySelector("#details-error");
@@ -216,7 +221,11 @@ export function initHoldingDialogs({
 
     if (typeof onAfterAction === "function") await onAfterAction();
 
-    toast(`${holding.symbol} 及其交易紀錄已徹底刪除，並已同步至雲端。`);
+    const currentMode = getStorageMode ? getStorageMode() : "local";
+    const isCloudMode = currentMode === "google-sheet" || currentMode === "cloud";
+    const syncSuffix = isCloudMode ? "，並已同步至雲端。" : "。";
+
+    toast(`${holding.symbol} 及其交易紀錄已徹底刪除${syncSuffix}`);
   }
 
   function openEditDialog(holding) {
@@ -268,7 +277,6 @@ export function initHoldingDialogs({
     toast(`「${field.name}」欄位已刪除。`);
   }
 
-  // 🌟 詳情內點擊「＋ 新增交易」：先 PULL 再開交易彈窗
   document.querySelector("#details-add-transaction")?.addEventListener("click", async () => {
     if (typeof onBeforeAction === "function") await onBeforeAction();
     const holding = state.holdings.find((item) => item.id === activeHoldingId);
@@ -277,7 +285,6 @@ export function initHoldingDialogs({
     txDialog.open(holding);
   });
 
-  // 🌟 詳情內點擊「編輯持倉」：先 PULL 再開編輯彈窗
   document.querySelector("#details-edit-holding")?.addEventListener("click", async () => {
     if (typeof onBeforeAction === "function") await onBeforeAction();
     const holding = state.holdings.find((item) => item.id === activeHoldingId);
@@ -349,8 +356,12 @@ export function initHoldingDialogs({
 
     if (typeof onAfterAction === "function") await onAfterAction();
 
+    const currentMode = getStorageMode ? getStorageMode() : "local";
+    const isCloudMode = currentMode === "google-sheet" || currentMode === "cloud";
+    const syncSuffix = isCloudMode ? "，並已同步至雲端。" : "。";
+
     document.querySelector("#edit-dialog")?.close();
-    toast("庫存資料已更新，並已同步至雲端。");
+    toast(`庫存資料已更新${syncSuffix}`);
   });
 
   document.querySelector("#custom-field-form")?.addEventListener("submit", (event) => {

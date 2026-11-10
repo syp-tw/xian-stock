@@ -1,4 +1,4 @@
-// js/app.js - 核心主控調度模組（專注於全域狀態、表格渲染、前置自動 PULL 與匯入匯出協調）
+// js/app.js - 核心主控調度模組（專注於全域狀態、表格渲染、嚴格隔離本機/雲端同步與匯入匯出協調）
 import { getHoldingMetrics, getPortfolioMetrics } from "./calculations.js";
 import { 
   parseBackup, serializeBackup, serializeJsBackup, 
@@ -100,6 +100,7 @@ function persist() {
     toast("無法儲存資料，請確認瀏覽器儲存空間或隱私設定。", true);
     return;
   }
+  // 🌟 嚴格防呆：只有在對應模式才發起排程，本機模式完全不動作
   if (storageMode === "cloud") cloudSync.scheduleSave(storageMode);
   if (storageMode === "google-sheet") googleSheetSync.scheduleAutoSave();
 }
@@ -148,9 +149,13 @@ const googleSheetSync = new GoogleSheetSyncManager({
   toast,
 });
 
-// 🌟 核心防衝突協調器：更新／交易／編輯前一律先 PULL
+// 🌟 嚴格安全防呆：本機模式下絕對不發送任何 PULL 請求
 async function syncBeforeTransaction() {
+  if (storageMode === "local" || (storageMode !== "google-sheet" && storageMode !== "cloud")) {
+    return true;
+  }
   if (state.settings.autoSyncOnTrade === false) return true;
+
   if (storageMode === "google-sheet") {
     const url = googleSheetSync.getWebhookUrl();
     if (googleSheetSync.isValidWebhookUrl(url)) {
@@ -162,9 +167,13 @@ async function syncBeforeTransaction() {
   return true;
 }
 
-// 🌟 核心防衝突協調器：交易完成後立即強制 PUSH
+// 🌟 嚴格安全防呆：本機模式下絕對不發送任何 PUSH 請求
 async function syncAfterTransaction() {
+  if (storageMode === "local" || (storageMode !== "google-sheet" && storageMode !== "cloud")) {
+    return;
+  }
   if (state.settings.autoSyncOnTrade === false) return;
+
   if (storageMode === "google-sheet") {
     const url = googleSheetSync.getWebhookUrl();
     if (googleSheetSync.isValidWebhookUrl(url)) {
@@ -177,6 +186,7 @@ async function syncAfterTransaction() {
 
 const txDialog = new TransactionDialog({
   getState: () => state,
+  getStorageMode: () => storageMode, // 🌟 傳入模式讓彈窗動態產生正確 Toast 訊息
   onBeforeSave: syncBeforeTransaction,
   onTransactionSaved: async (activeHolding) => {
     state.holdings = state.holdings.filter((h) => Number(h.shares) > 0);
@@ -238,7 +248,6 @@ function syncUsStreamSubscriptions() {
   usStream.setSymbols(activeUsSymbols);
 }
 
-// 🌟 行情輪詢器傳入 onSyncPull，讓切換回分頁時自動同步最新雲端庫存
 const marketPoller = new MarketPoller({
   getState: () => state,
   persist,
@@ -263,6 +272,7 @@ const holdingDialogs = initHoldingDialogs({
   toast,
   txDialog,
   syncUsStreamSubscriptions,
+  getStorageMode: () => storageMode, // 🌟 傳入模式讓明細彈窗動態產生正確 Toast 訊息
   onBeforeAction: syncBeforeTransaction,
   onAfterAction: syncAfterTransaction,
 });
@@ -442,7 +452,6 @@ function makeHoldingRow(holding, activeColumns) {
   row.tabIndex = 0;
   row.setAttribute("aria-label", translateText(`查看 ${holding.symbol} 交易明細`, state.settings.language));
 
-  // 🌟 點擊整列查看詳情前先 PULL，確保交易紀錄為雲端最新
   row.addEventListener("click", async (event) => {
     if (!event.target.closest("button")) {
       await syncBeforeTransaction();
@@ -610,7 +619,6 @@ function makeHoldingRow(holding, activeColumns) {
       const actions = document.createElement("div");
       actions.className = "cell-actions";
       
-      // 🌟 行內編輯：點擊先 PULL，再打開編輯視窗
       const edit = document.createElement("button");
       edit.className = "row-action";
       edit.textContent = translateText("編輯", state.settings.language);
@@ -629,7 +637,6 @@ function makeHoldingRow(holding, activeColumns) {
         holdingDialogs.deleteHolding(holding);
       });
 
-      // 🌟 行內交易：點擊先 PULL，再打開交易視窗
       const trade = document.createElement("button");
       trade.className = "row-action";
       trade.textContent = translateText("交易", state.settings.language);
@@ -702,7 +709,6 @@ function render() {
   const tableFooterCount = document.querySelector("#table-footer-count");
   if (tableFooterCount) tableFooterCount.textContent = `顯示 ${visible.length} 筆持倉`;
 
-  // 指標總覽計算
   const totals = getPortfolioMetrics(accountScopedHoldings, state.settings);
   const isUsd = state.settings.overviewCurrency === "USD";
   const fxRate = Number(state.settings.fxRate) > 0 ? Number(state.settings.fxRate) : 32.5;
@@ -776,7 +782,7 @@ function openColumnManager() {
 
     for (const colId of currentOrder) {
       if (baseMap.has(colId)) orderedCols.push(baseMap.get(colId));
-      else if (customMap.has(colId)) orderedCols.push(customMap.get(colId));
+      else if (customMap.has(colId)) combined.push(customMap.get(colId));
     }
     for (const [id, field] of customMap.entries()) {
       if (!orderedCols.some((c) => c.id === id)) orderedCols.splice(orderedCols.length - 1, 0, field);
@@ -1060,7 +1066,7 @@ document.querySelectorAll(".table-tab").forEach((button) => button.addEventListe
   render();
 }));
 
-// 🌟 點擊「↻ 更新所有報價」按鈕：強制先向雲端 PULL 最新庫存，再批次更新最新報價！
+// 🌟 點擊「↻ 更新所有報價」按鈕：先 PULL 再批次更新最新報價
 document.querySelector("#refresh-quotes")?.addEventListener("click", async () => {
   const btn = document.querySelector("#refresh-quotes");
   if (btn) {
@@ -1068,12 +1074,10 @@ document.querySelector("#refresh-quotes")?.addEventListener("click", async () =>
     btn.disabled = true;
   }
   try {
-    // 1. 先 PULL 最新持股狀態
     await syncBeforeTransaction();
   } catch (err) {
     console.warn("更新報價前同步雲端失敗:", err);
   }
-  // 2. 依照最新庫存抓取全市場最新報價
   marketPoller.refreshAllQuotes({ silent: false });
 });
 

@@ -25,8 +25,9 @@ const FIELD_LABELS = {
 };
 
 export class TransactionDialog {
-  constructor({ getState, onBeforeSave, onTransactionSaved, onOpenDetails, toast }) {
+  constructor({ getState, getStorageMode, onBeforeSave, onTransactionSaved, onOpenDetails, toast }) {
     this.getState = getState;
+    this.getStorageMode = getStorageMode;
     this.onBeforeSave = onBeforeSave;
     this.onTransactionSaved = onTransactionSaved;
     this.onOpenDetails = onOpenDetails;
@@ -621,7 +622,6 @@ export class TransactionDialog {
       if (!event.target.closest(".quote-input-wrap")) this.suggestions?.classList.remove("visible");
     });
 
-    // 🌟 表單提交：自動執行 PULL -> 本地記帳 -> 即刻 PUSH
     this.form?.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (this.errorElem) this.errorElem.textContent = "";
@@ -658,7 +658,6 @@ export class TransactionDialog {
       }
 
       try {
-        // 1. 交易前自動 PULL
         if (typeof this.onBeforeSave === "function") {
           await this.onBeforeSave();
         }
@@ -706,14 +705,18 @@ export class TransactionDialog {
         this.dialog.close();
         const activeHolding = state.holdings.find((item) => item.id === this.activeHoldingId);
         
-        // 2. 交易完成：立即強制 PUSH
         await this.onTransactionSaved(activeHolding, transactionId);
+
+        // 🌟 訊息防呆：本機模式僅顯示「紀錄已新增」，雲端模式才顯示「並已同步至雲端！」
+        const currentMode = this.getStorageMode ? this.getStorageMode() : "local";
+        const isCloudMode = currentMode === "google-sheet" || currentMode === "cloud";
+        const syncSuffix = isCloudMode ? "，並已同步至雲端！" : "。";
 
         const savedTransaction = transactionId ? state.transactions.find((item) => item.id === transactionId) : null;
         this.toast(
           savedTransaction?.locked
-            ? "舊版／校正交易明細已更新；目前持倉股數與成本未變更。"
-            : transactionId ? "交易明細已修改，並已同步至雲端！" : `${locale.transactionLabels[type]}紀錄已新增，並已同步至雲端！`
+            ? `舊版／校正交易明細已更新；目前持倉股數與成本未變更${syncSuffix}`
+            : transactionId ? `交易明細已修改${syncSuffix}` : `${locale.transactionLabels[type]}紀錄已新增${syncSuffix}`
         );
 
         this.editingTransactionId = null;
