@@ -1,4 +1,4 @@
-// js/app.js - 核心主控調度模組（專注於全域狀態、表格渲染與匯入匯出協調）
+// js/app.js - 核心主控調度模組（專注於全域狀態、表格渲染、前置自動 PULL 與匯入匯出協調）
 import { getHoldingMetrics, getPortfolioMetrics } from "./calculations.js";
 import { 
   parseBackup, serializeBackup, serializeJsBackup, 
@@ -21,10 +21,13 @@ import { initBatchManager } from "./ui-batch.js";
 import { initHoldingDialogs } from "./dialog-holding.js";
 import { initSettingsDialog } from "./dialog-settings.js";
 
+// ============================================================================
+// 1. 全域狀態初始化與版本升級遷移
+// ============================================================================
 let storageMode = loadStorageMode();
 const state = loadState(storageMode);
 
-// 1. 自動升級舊版欄位排序
+// 1.1 自動升級舊版單層欄位排序
 const legacyCols = ["currentPrice", "averageCost", "profit", "returnRate", "marketValue", "cost"];
 if (Array.isArray(state.settings.columnOrder) && state.settings.columnOrder.some((c) => legacyCols.includes(c))) {
   state.settings.columnOrder = [...DEFAULT_SETTINGS.columnOrder];
@@ -32,7 +35,7 @@ if (Array.isArray(state.settings.columnOrder) && state.settings.columnOrder.some
   saveState(state, storageMode);
 }
 
-// 🌟 自動為舊使用者無縫補入「當日漲跌 / 漲跌幅」欄位
+// 1.2 自動無縫補入「當日漲跌 / 漲跌幅」欄位
 if (Array.isArray(state.settings.columnOrder) && !state.settings.columnOrder.includes("dayChange")) {
   const priceIdx = state.settings.columnOrder.indexOf("priceCost");
   const insertIndex = priceIdx >= 0 ? priceIdx + 1 : 2;
@@ -41,7 +44,7 @@ if (Array.isArray(state.settings.columnOrder) && !state.settings.columnOrder.inc
   saveState(state, storageMode);
 }
 
-// 🌟 自動為舊使用者無縫補入「持股日損益 / 持股日損益漲跌幅」欄位至 dayChange 後方
+// 1.3 自動無縫補入「持股日損益 / 持股日損益漲跌幅」欄位
 if (Array.isArray(state.settings.columnOrder) && !state.settings.columnOrder.includes("holdingDailyProfit")) {
   const dayChangeIdx = state.settings.columnOrder.indexOf("dayChange");
   const priceIdx = state.settings.columnOrder.indexOf("priceCost");
@@ -51,12 +54,12 @@ if (Array.isArray(state.settings.columnOrder) && !state.settings.columnOrder.inc
   saveState(state, storageMode);
 }
 
-// 2. 清理持股為 0 的殘留標的
+// 1.4 清理股數為 0 的殘留標的
 const beforePurgeCount = state.holdings.length;
 state.holdings = state.holdings.filter((h) => Number(h.shares) > 0);
 if (state.holdings.length !== beforePurgeCount) saveState(state, storageMode);
 
-// 3. 校正既有持倉中文名稱
+// 1.5 自動校正持倉名稱
 let hasRepairedNames = false;
 for (const holding of state.holdings) {
   if (!holding.name || holding.name === holding.symbol || holding.name === holding.symbol.replace(/\.(TW|TWO)$/i, "")) {
@@ -81,6 +84,9 @@ const elements = {
 
 let activeFilter = "all";
 
+// ============================================================================
+// 2. 訊息提示、檔案下載與持久化
+// ============================================================================
 function toast(message, isError = false) {
   const node = document.createElement("div");
   node.className = `toast${isError ? " error" : ""}`;
@@ -126,7 +132,9 @@ function downloadFile(filename, content, type) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-// ----------------- 連線與模組實例化 -----------------
+// ============================================================================
+// 3. 雲端同步、串流與管理器實例化
+// ============================================================================
 const cloudSync = new CloudSyncManager({
   getState: () => state,
   onStateReplace: replaceState,
@@ -140,13 +148,42 @@ const googleSheetSync = new GoogleSheetSyncManager({
   toast,
 });
 
+// 🌟 核心防衝突協調器：更新／交易／編輯前一律先 PULL
+async function syncBeforeTransaction() {
+  if (state.settings.autoSyncOnTrade === false) return true;
+  if (storageMode === "google-sheet") {
+    const url = googleSheetSync.getWebhookUrl();
+    if (googleSheetSync.isValidWebhookUrl(url)) {
+      await googleSheetSync.pullFromGoogleSheet({ silent: true });
+    }
+  } else if (storageMode === "cloud" && cloudSync.cloudFileReady) {
+    await cloudSync.silentLoad(storageMode);
+  }
+  return true;
+}
+
+// 🌟 核心防衝突協調器：交易完成後立即強制 PUSH
+async function syncAfterTransaction() {
+  if (state.settings.autoSyncOnTrade === false) return;
+  if (storageMode === "google-sheet") {
+    const url = googleSheetSync.getWebhookUrl();
+    if (googleSheetSync.isValidWebhookUrl(url)) {
+      await googleSheetSync.pushToGoogleSheet({ silent: true });
+    }
+  } else if (storageMode === "cloud" && cloudSync.cloudFileReady) {
+    await cloudSync.silentSave(storageMode);
+  }
+}
+
 const txDialog = new TransactionDialog({
   getState: () => state,
-  onTransactionSaved: (activeHolding) => {
+  onBeforeSave: syncBeforeTransaction,
+  onTransactionSaved: async (activeHolding) => {
     state.holdings = state.holdings.filter((h) => Number(h.shares) > 0);
     syncUsStreamSubscriptions();
     persist();
     render();
+    await syncAfterTransaction();
     if (activeHolding && activeHolding.shares > 0) holdingDialogs.openHoldingDetails(activeHolding);
   },
   onOpenDetails: (holding) => holdingDialogs.openHoldingDetails(holding),
@@ -201,12 +238,14 @@ function syncUsStreamSubscriptions() {
   usStream.setSymbols(activeUsSymbols);
 }
 
+// 🌟 行情輪詢器傳入 onSyncPull，讓切換回分頁時自動同步最新雲端庫存
 const marketPoller = new MarketPoller({
   getState: () => state,
   persist,
   render,
   usStream,
   toast,
+  onSyncPull: syncBeforeTransaction,
 });
 
 initBatchManager({
@@ -224,6 +263,8 @@ const holdingDialogs = initHoldingDialogs({
   toast,
   txDialog,
   syncUsStreamSubscriptions,
+  onBeforeAction: syncBeforeTransaction,
+  onAfterAction: syncAfterTransaction,
 });
 
 const settingsDialog = initSettingsDialog({
@@ -241,7 +282,9 @@ const settingsDialog = initSettingsDialog({
   txDialog,
 });
 
-// ----------------- 表格排序與欄位設定 -----------------
+// ============================================================================
+// 4. 表格欄位、排序與列渲染
+// ============================================================================
 function getActiveColumns() {
   const customMap = new Map(state.customFields.map((f) => [f.id, { id: f.id, label: f.name, isCustom: true }]));
   const baseMap = new Map(BASE_COLUMNS.map((c) => [c.id, c]));
@@ -398,13 +441,22 @@ function makeHoldingRow(holding, activeColumns) {
   row.className = "holding-row";
   row.tabIndex = 0;
   row.setAttribute("aria-label", translateText(`查看 ${holding.symbol} 交易明細`, state.settings.language));
-  row.addEventListener("click", (event) => {
-    if (!event.target.closest("button")) holdingDialogs.openHoldingDetails(holding);
+
+  // 🌟 點擊整列查看詳情前先 PULL，確保交易紀錄為雲端最新
+  row.addEventListener("click", async (event) => {
+    if (!event.target.closest("button")) {
+      await syncBeforeTransaction();
+      const latestHolding = state.holdings.find((h) => h.id === holding.id) || holding;
+      holdingDialogs.openHoldingDetails(latestHolding);
+    }
   });
-  row.addEventListener("keydown", (event) => {
+
+  row.addEventListener("keydown", async (event) => {
     if ((event.key === "Enter" || event.key === " ") && !event.target.closest("button")) {
       event.preventDefault();
-      holdingDialogs.openHoldingDetails(holding);
+      await syncBeforeTransaction();
+      const latestHolding = state.holdings.find((h) => h.id === holding.id) || holding;
+      holdingDialogs.openHoldingDetails(latestHolding);
     }
   });
 
@@ -457,7 +509,6 @@ function makeHoldingRow(holding, activeColumns) {
       cell.append(top, bottom);
       row.append(cell);
     } else if (col.id === "dayChange") {
-      // 當日每股價格漲跌 / 標的漲跌幅 %
       const cell = document.createElement("td");
       cell.className = "compound-cell";
       const change = metrics.dailyChange;
@@ -485,7 +536,6 @@ function makeHoldingRow(holding, activeColumns) {
       cell.append(top, bottom);
       row.append(cell);
     } else if (col.id === "holdingDailyProfit") {
-      // 🌟 新增：持股日損益總額 / 持股日損益漲跌幅 %
       const cell = document.createElement("td");
       cell.className = "compound-cell";
       const dailyProfit = metrics.dailyProfit;
@@ -559,18 +609,37 @@ function makeHoldingRow(holding, activeColumns) {
       const actionsCell = document.createElement("td");
       const actions = document.createElement("div");
       actions.className = "cell-actions";
+      
+      // 🌟 行內編輯：點擊先 PULL，再打開編輯視窗
       const edit = document.createElement("button");
       edit.className = "row-action";
       edit.textContent = translateText("編輯", state.settings.language);
-      edit.addEventListener("click", () => holdingDialogs.openEditDialog(holding));
+      edit.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        await syncBeforeTransaction();
+        const latestHolding = state.holdings.find((h) => h.id === holding.id) || holding;
+        holdingDialogs.openEditDialog(latestHolding);
+      });
+
       const remove = document.createElement("button");
       remove.className = "row-action danger";
       remove.textContent = translateText("刪除", state.settings.language);
-      remove.addEventListener("click", () => holdingDialogs.deleteHolding(holding));
+      remove.addEventListener("click", (e) => {
+        e.stopPropagation();
+        holdingDialogs.deleteHolding(holding);
+      });
+
+      // 🌟 行內交易：點擊先 PULL，再打開交易視窗
       const trade = document.createElement("button");
       trade.className = "row-action";
       trade.textContent = translateText("交易", state.settings.language);
-      trade.addEventListener("click", () => txDialog.open(holding));
+      trade.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        await syncBeforeTransaction();
+        const latestHolding = state.holdings.find((h) => h.id === holding.id) || holding;
+        txDialog.open(latestHolding);
+      });
+
       actions.append(edit, trade, remove);
       actionsCell.append(actions);
       row.append(actionsCell);
@@ -582,7 +651,9 @@ function makeHoldingRow(holding, activeColumns) {
   return row;
 }
 
-// ----------------- 全頁渲染核心流程 -----------------
+// ============================================================================
+// 5. 全頁儀表板核心渲染流程
+// ============================================================================
 function render() {
   const activeColumns = getActiveColumns();
   renderTableHeaders();
@@ -631,7 +702,7 @@ function render() {
   const tableFooterCount = document.querySelector("#table-footer-count");
   if (tableFooterCount) tableFooterCount.textContent = `顯示 ${visible.length} 筆持倉`;
 
-  // 指標總覽動態計算
+  // 指標總覽計算
   const totals = getPortfolioMetrics(accountScopedHoldings, state.settings);
   const isUsd = state.settings.overviewCurrency === "USD";
   const fxRate = Number(state.settings.fxRate) > 0 ? Number(state.settings.fxRate) : 32.5;
@@ -688,7 +759,9 @@ function render() {
   applyTranslations(state.settings.language);
 }
 
-// ----------------- 自訂欄位順序彈窗 -----------------
+// ============================================================================
+// 6. 自訂欄位順序彈窗管理
+// ============================================================================
 function openColumnManager() {
   const dialog = document.querySelector("#column-manager-dialog");
   const list = dialog?.querySelector("#column-order-list");
@@ -794,7 +867,9 @@ function openColumnManager() {
   dialog.showModal();
 }
 
-// ----------------- 多格式統一匯出與匯入 -----------------
+// ============================================================================
+// 7. 多格式統一匯出與匯入控制器
+// ============================================================================
 document.querySelector("#export-backup-json")?.addEventListener("click", () => {
   downloadFile(`xian-stock-backup-${today()}.json`, serializeBackup(state), "application/json;charset=utf-8");
   toast("JSON 完整備份已下載。");
@@ -928,10 +1003,20 @@ document.querySelector("#import-file-unified")?.addEventListener("change", async
   }
 });
 
-// ----------------- 全域事件監聽 -----------------
-document.querySelector("#add-holding")?.addEventListener("click", () => txDialog.open());
-document.querySelector("#add-holding-table")?.addEventListener("click", () => txDialog.open());
-document.querySelector("#empty-add-holding")?.addEventListener("click", () => txDialog.open());
+// ============================================================================
+// 8. 全域事件監聽與啟動生命週期
+// ============================================================================
+
+// 🌟 點擊「新增持倉」按鈕：先 PULL 再打開彈窗
+const handleOpenAddTrade = async () => {
+  await syncBeforeTransaction();
+  txDialog.open();
+};
+
+document.querySelector("#add-holding")?.addEventListener("click", handleOpenAddTrade);
+document.querySelector("#add-holding-table")?.addEventListener("click", handleOpenAddTrade);
+document.querySelector("#empty-add-holding")?.addEventListener("click", handleOpenAddTrade);
+
 document.querySelector("#manage-columns-btn")?.addEventListener("click", openColumnManager);
 document.querySelector("#open-settings")?.addEventListener("click", settingsDialog.openSettings);
 document.querySelector("#open-settings-top")?.addEventListener("click", settingsDialog.openSettings);
@@ -975,7 +1060,20 @@ document.querySelectorAll(".table-tab").forEach((button) => button.addEventListe
   render();
 }));
 
-document.querySelector("#refresh-quotes")?.addEventListener("click", () => {
+// 🌟 點擊「↻ 更新所有報價」按鈕：強制先向雲端 PULL 最新庫存，再批次更新最新報價！
+document.querySelector("#refresh-quotes")?.addEventListener("click", async () => {
+  const btn = document.querySelector("#refresh-quotes");
+  if (btn) {
+    btn.classList.add("loading");
+    btn.disabled = true;
+  }
+  try {
+    // 1. 先 PULL 最新持股狀態
+    await syncBeforeTransaction();
+  } catch (err) {
+    console.warn("更新報價前同步雲端失敗:", err);
+  }
+  // 2. 依照最新庫存抓取全市場最新報價
   marketPoller.refreshAllQuotes({ silent: false });
 });
 
@@ -1009,6 +1107,7 @@ document.querySelectorAll(".nav-item[href]").forEach((link) => link.addEventList
   }
 }));
 
+// 共用檔案系統按鈕掛接
 document.querySelector("#shared-file-open")?.addEventListener("click", () => cloudSync.runAction(() => cloudSync.selectAndLoadFile(storageMode), storageMode));
 document.querySelector("#shared-folder-select")?.addEventListener("click", () => {
   let pickerPromise;
@@ -1032,7 +1131,7 @@ if (footerYear) footerYear.textContent = new Date().getFullYear();
 if (state.storageError) toast("讀取已儲存資料時發生問題，目前顯示空白資料。", true);
 
 // ============================================================================
-// 系統啟動生命週期
+// 系統開機自啟
 // ============================================================================
 render();
 cloudSync.init(storageMode);

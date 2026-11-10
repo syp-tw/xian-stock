@@ -1,4 +1,4 @@
-// js/market-poller.js - 行情報價定時輪詢、全市場批次刷新、Render 喚醒與開盤時段排程模組
+// js/market-poller.js - 行情報價定時輪詢、全市場批次刷新、分頁喚醒自動 PULL 模組
 import { fetchQuote, getQuoteDataFromResponse, isTaiwanRegularMarketHours } from "./quotes.js";
 
 function chunkArray(array, size = 20) {
@@ -50,19 +50,20 @@ export async function safeFetchQuoteUpdate(holding, settings, timeoutMs = 5000, 
       name: result.name,
       updatedAt: new Date().toISOString(),
     };
-  } catch (error) {
+  } catch {
     clearTimeout(timer);
     return { id: holding.id, success: false };
   }
 }
 
 export class MarketPoller {
-  constructor({ getState, persist, render, usStream, toast }) {
+  constructor({ getState, persist, render, usStream, toast, onSyncPull }) {
     this.getState = getState;
     this.persist = persist;
     this.render = render;
     this.usStream = usStream;
     this.toast = toast;
+    this.onSyncPull = onSyncPull; // 🌟 支援分頁喚醒自動 PULL
 
     this.twPollTimer = null;
     this.isPolling = false;
@@ -73,7 +74,6 @@ export class MarketPoller {
     this.startTwPolling();
     this.setupPageVisibilityListener();
     this.warmupBackend();
-    // 進入網頁時執行靜默背景更新，不轉動使用者按鈕
     this.refreshAllQuotes({ silent: true });
   }
 
@@ -98,12 +98,19 @@ export class MarketPoller {
   }
 
   setupPageVisibilityListener() {
-    document.addEventListener("visibilitychange", () => {
+    document.addEventListener("visibilitychange", async () => {
       if (document.visibilityState === "visible") {
+        // 🌟 分頁切回前景時，自動靜默向雲端 PULL 最新庫存
+        if (typeof this.onSyncPull === "function") {
+          try {
+            await this.onSyncPull();
+          } catch (e) {
+            console.warn("喚醒時同步庫存失敗:", e);
+          }
+        }
         if (this.usStream) {
           this.usStream.connect();
         }
-        // 僅在開盤時段切回前景時才進行高頻台股輪詢補刷
         if (isTaiwanRegularMarketHours()) {
           this.pollTaiwanStocks();
         }
@@ -114,7 +121,6 @@ export class MarketPoller {
   startTwPolling() {
     if (this.twPollTimer) clearInterval(this.twPollTimer);
     this.twPollTimer = setInterval(() => {
-      // 假日/非交易時段暫停定時輪詢
       if (!isTaiwanRegularMarketHours()) return;
       this.pollTaiwanStocks();
     }, 10000);
@@ -260,7 +266,6 @@ export class MarketPoller {
       const caHoldings = activeHoldings.filter((h) => h.market === "CA");
       let successCount = 0;
 
-      // 🌟 核心突破：無論開盤還是週末休市，統一由後端 API 批次取得台股與美股最新／最後收盤數據
       if (state.settings.quoteProvider !== "yahoo" && (twHoldings.length > 0 || usHoldings.length > 0)) {
         try {
           const rawApiUrl = state.settings.quoteApiUrl || "https://my-stock-api-nhaj.onrender.com/api/realtime";
@@ -291,7 +296,6 @@ export class MarketPoller {
             const twData = json.tw || {};
             const usData = json.us || {};
 
-            // 1. 寫入台股現價／週末最後收盤價
             for (const holding of twHoldings) {
               const code = holding.symbol.replace(/\.(TW|TWO)$/i, "");
               const q = getQuoteDataFromResponse(twData, code);
@@ -305,7 +309,6 @@ export class MarketPoller {
               }
             }
 
-            // 2. 寫入美股現價／週末最後收盤價（解決週末 WebSocket 零封包）
             for (const holding of usHoldings) {
               const q = usData[holding.symbol.toUpperCase()];
               if (q && Number(q.price) > 0) {
@@ -323,7 +326,6 @@ export class MarketPoller {
         }
       }
 
-      // 加拿大股（或後端未能覆蓋的標的）走個別更新
       const remainingHoldings = activeHoldings.filter((h) => 
         h.market === "CA" || !h.updatedAt || (Date.now() - new Date(h.updatedAt).getTime() > 30000)
       );

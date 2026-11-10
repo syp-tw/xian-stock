@@ -1,13 +1,33 @@
-// js/dialog-transaction.js - 新增與編輯交易彈窗控制器（含帳戶隔離與 AbortController 異步競態安全）
+// js/dialog-transaction.js - 新增與編輯交易彈窗控制器（含帳戶隔離、即時查價與交易前後自動同步）
 import { estimateFee } from "./calculations.js";
 import { formatMoney, formatQuantity, locale, translateText, applyTranslations } from "./i18n.js";
 import { fetchQuote, getStockName, quoteMarket, searchQuotes, normalizedSymbol } from "./quotes.js";
 import { addTransaction, normalizeSymbol, rebuildHolding, today } from "./ledger.js";
 import { DEFAULT_ACCOUNT_ID } from "./storage.js";
 
+const FIELD_LABELS = {
+  quantity: {
+    buy: "買入股數",
+    sell: "賣出股數",
+    dividend: "配息股數（選填）",
+    stockDividend: "新增配股股數",
+    split: "目前持有股數",
+    capitalReduction: "減少股數（選填）",
+  },
+  price: {
+    buy: "買入價格",
+    sell: "賣出價格",
+    dividend: "每股配息金額",
+    stockDividend: "配股價格（參考）",
+    split: "目前每股價格（參考）",
+    capitalReduction: "每股退還金額",
+  },
+};
+
 export class TransactionDialog {
-  constructor({ getState, onTransactionSaved, onOpenDetails, toast }) {
+  constructor({ getState, onBeforeSave, onTransactionSaved, onOpenDetails, toast }) {
     this.getState = getState;
+    this.onBeforeSave = onBeforeSave;
     this.onTransactionSaved = onTransactionSaved;
     this.onOpenDetails = onOpenDetails;
     this.toast = toast;
@@ -115,7 +135,7 @@ export class TransactionDialog {
       if (nameMatch) return nameMatch;
 
       return null;
-    } catch (e) {
+    } catch {
       return null;
     }
   }
@@ -175,22 +195,6 @@ export class TransactionDialog {
   updateTransactionFields() {
     if (!this.transactionType) return;
     const type = this.transactionType.value;
-    const quantityLabels = {
-      buy: "買入股數",
-      sell: "賣出股數",
-      dividend: "配息股數（選填）",
-      stockDividend: "新增配股股數",
-      split: "目前持有股數",
-      capitalReduction: "減少股數（選填）",
-    };
-    const priceLabels = {
-      buy: "買入價格",
-      sell: "賣出價格",
-      dividend: "每股配息金額",
-      stockDividend: "配股價格（參考）",
-      split: "目前每股價格（參考）",
-      capitalReduction: "每股退還金額",
-    };
 
     if (this.quantityField) this.quantityField.hidden = type === "split";
     if (this.priceField) this.priceField.hidden = type === "stockDividend" || type === "split";
@@ -198,8 +202,8 @@ export class TransactionDialog {
     if (this.splitField) this.splitField.hidden = type !== "split";
     if (this.currentPriceField) this.currentPriceField.hidden = !["buy", "split", "capitalReduction"].includes(type);
 
-    if (this.quantityLabel && quantityLabels[type]) this.quantityLabel.textContent = quantityLabels[type];
-    if (this.priceLabel && priceLabels[type]) this.priceLabel.textContent = priceLabels[type];
+    if (this.quantityLabel && FIELD_LABELS.quantity[type]) this.quantityLabel.textContent = FIELD_LABELS.quantity[type];
+    if (this.priceLabel && FIELD_LABELS.price[type]) this.priceLabel.textContent = FIELD_LABELS.price[type];
 
     if (this.quantityInput) {
       this.quantityInput.placeholder = type === "dividend" ? "留白依該帳戶庫存計算" : "";
@@ -297,7 +301,6 @@ export class TransactionDialog {
       name: autoChineseName || quote.name || canonical,
     };
 
-    // 🌟 核心防護：保留使用者原始輸入的英文字母後綴（如 00685L.TW, 00631L.TW），絕不倒退改回純數字
     if (this.symbolInput) {
       const currentTyped = this.symbolInput.value.trim().toUpperCase();
       if (!currentTyped || currentTyped === quote.symbol.replace(/\.(TW|TWO)$/i, "")) {
@@ -361,7 +364,7 @@ export class TransactionDialog {
     if (!quotes.length) {
       const empty = document.createElement("div");
       empty.className = "quote-empty";
-      empty.textContent = "找不到符合的股票，請再試試看代號或中文簡稱（如 00685L、00631L、00937B）。";
+      empty.textContent = "找不到符合的股票，請再試試看代號或中文簡稱。";
       this.suggestions.append(empty);
     } else {
       for (const quote of quotes) {
@@ -399,7 +402,7 @@ export class TransactionDialog {
     this.suggestions.replaceChildren();
     const loading = document.createElement("div");
     loading.className = "quote-loading";
-    loading.textContent = "正在搜尋台股、美股與加拿大股…";
+    loading.textContent = "正在搜尋股票…";
     this.suggestions.append(loading);
     this.suggestions.classList.add("visible");
 
@@ -573,7 +576,6 @@ export class TransactionDialog {
         return;
       }
 
-      // 只要匹配到正確股名，直接執行查價帶入，不覆寫使用者的代號輸入框
       if (autoChineseName) {
         this.autoFetchTimer = setTimeout(() => {
           if (this.symbolInput?.value.trim().toUpperCase() === rawInput.toUpperCase() && this.selectedQuote) {
@@ -594,7 +596,7 @@ export class TransactionDialog {
               this.suggestions.replaceChildren();
               const message = document.createElement("div");
               message.className = "quote-empty";
-              message.textContent = "報價搜尋暫時無法使用，請稍後再試或手動輸入股票代號。";
+              message.textContent = "報價搜尋暫時無法使用，請手動輸入價格。";
               this.suggestions.append(message);
               this.suggestions.classList.add("visible");
             }
@@ -619,10 +621,11 @@ export class TransactionDialog {
       if (!event.target.closest(".quote-input-wrap")) this.suggestions?.classList.remove("visible");
     });
 
-    this.form?.addEventListener("submit", (event) => {
+    // 🌟 表單提交：自動執行 PULL -> 本地記帳 -> 即刻 PUSH
+    this.form?.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (this.errorElem) this.errorElem.textContent = "";
-      const state = this.getState();
+
       const form = this.form;
       const type = this.transactionType?.value || "buy";
       const targetAccountId = this.accountSelect?.value || DEFAULT_ACCOUNT_ID;
@@ -636,26 +639,37 @@ export class TransactionDialog {
       const transactionId = this.editingTransactionId;
 
       if (!symbolValue) {
-        if (this.errorElem) this.errorElem.textContent = translateText("請輸入股票代號。", state.settings?.language || "zh-TW");
+        if (this.errorElem) this.errorElem.textContent = "請輸入股票代號。";
         return;
       }
       if (["buy", "sell"].includes(type) && (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0)) {
-        if (this.errorElem) this.errorElem.textContent = translateText("股數與價格都必須是大於 0 的有效數值。", state.settings?.language || "zh-TW");
+        if (this.errorElem) this.errorElem.textContent = "股數與價格都必須是大於 0 的有效數值。";
         return;
       }
       if (!Number.isFinite(fee) || fee < 0) {
-        if (this.errorElem) this.errorElem.textContent = translateText("手續費必須是有效的非負數值。", state.settings?.language || "zh-TW");
+        if (this.errorElem) this.errorElem.textContent = "手續費必須是有效的非負數值。";
         return;
       }
 
-      // 嚴格確保帶 L, R, B 的代碼不被截斷，並加上正確市場後綴
-      const canonicalSymbol = normalizedSymbol(symbolValue);
-      const autoChineseName = getStockName(canonicalSymbol) || getStockName(symbolValue);
-      const resolvedName = (this.selectedQuote && this.selectedQuote.name !== symbolValue)
-        ? this.selectedQuote.name
-        : (autoChineseName || symbolValue);
+      const originalSaveText = this.saveBtn ? this.saveBtn.textContent : "";
+      if (this.saveBtn) {
+        this.saveBtn.disabled = true;
+        this.saveBtn.textContent = "同步中…";
+      }
 
       try {
+        // 1. 交易前自動 PULL
+        if (typeof this.onBeforeSave === "function") {
+          await this.onBeforeSave();
+        }
+
+        const state = this.getState();
+        const canonicalSymbol = normalizedSymbol(symbolValue);
+        const autoChineseName = getStockName(canonicalSymbol) || getStockName(symbolValue);
+        const resolvedName = (this.selectedQuote && this.selectedQuote.name !== symbolValue)
+          ? this.selectedQuote.name
+          : (autoChineseName || symbolValue);
+
         const updatedTransaction = {
           type,
           accountId: targetAccountId,
@@ -691,19 +705,26 @@ export class TransactionDialog {
 
         this.dialog.close();
         const activeHolding = state.holdings.find((item) => item.id === this.activeHoldingId);
-        this.onTransactionSaved(activeHolding, transactionId);
+        
+        // 2. 交易完成：立即強制 PUSH
+        await this.onTransactionSaved(activeHolding, transactionId);
 
         const savedTransaction = transactionId ? state.transactions.find((item) => item.id === transactionId) : null;
         this.toast(
           savedTransaction?.locked
             ? "舊版／校正交易明細已更新；目前持倉股數與成本未變更。"
-            : transactionId ? "交易明細已修改，庫存成本已重新計算。" : `${locale.transactionLabels[type]}紀錄已新增。`
+            : transactionId ? "交易明細已修改，並已同步至雲端！" : `${locale.transactionLabels[type]}紀錄已新增，並已同步至雲端！`
         );
 
         this.editingTransactionId = null;
         if (form.elements.transactionId) form.elements.transactionId.value = "";
       } catch (error) {
-        if (this.errorElem) this.errorElem.textContent = translateText(error.message, state.settings?.language || "zh-TW");
+        if (this.errorElem) this.errorElem.textContent = translateText(error.message, this.getState().settings?.language || "zh-TW");
+      } finally {
+        if (this.saveBtn) {
+          this.saveBtn.disabled = false;
+          this.saveBtn.textContent = originalSaveText;
+        }
       }
     });
   }

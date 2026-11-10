@@ -2,7 +2,6 @@
 import { translateText, applyTranslations } from "./i18n.js";
 import { saveStorageMode, loadState } from "./storage.js";
 
-// 🌟 優化版 Google Apps Script 腳本：突破 5 萬字儲存格上限 + 毫秒級批次寫入
 const GOOGLE_APPS_SCRIPT_TEMPLATE = `// 鮮存股 - 個人 Google 試算表同步專用腳本（高效穩定版）
 function getOrCreateSheet(name, isHidden) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -22,7 +21,6 @@ function doGet(e) {
       return ContentService.createTextOutput(JSON.stringify({ empty: true })).setMimeType(ContentService.MimeType.JSON);
     }
     
-    // 突破單元格 5 萬字元限制：逐行合併還原完整 JSON
     var values = sheet.getRange(1, 1, lastRow, 1).getValues();
     var fullPayload = "";
     for (var i = 0; i < values.length; i++) {
@@ -45,7 +43,6 @@ function doPost(e) {
     var sheet = getOrCreateSheet("_xian_stock_db", true);
     sheet.clear();
 
-    // 將 JSON 字串分段儲存，每段 4 萬字，避免單元格超過 5 萬字拋錯
     var minified = JSON.stringify(parsed);
     var chunkSize = 40000;
     var chunks = [];
@@ -54,7 +51,6 @@ function doPost(e) {
     }
     sheet.getRange(1, 1, chunks.length, 1).setValues(chunks);
 
-    // 更新人性化易讀報表
     var holdingsData = parsed.data ? parsed.data.holdings : parsed.holdings;
     updateHumanReadableHoldings(holdingsData);
 
@@ -86,7 +82,6 @@ function updateHumanReadableHoldings(holdings) {
     ]);
   });
 
-  // 一次性批次寫入，避免逐行 appendRow 逾時
   sheet.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
 }`;
 
@@ -114,6 +109,11 @@ export function initSettingsDialog({
     }
     const storageSelect = document.querySelector("#storage-mode");
     if (storageSelect) storageSelect.value = getStorageMode();
+    
+    // 🌟 載入自動 PULL & PUSH 開關狀態
+    const autoSyncEl = form.querySelector("#auto-sync-on-trade");
+    if (autoSyncEl) autoSyncEl.checked = state.settings.autoSyncOnTrade !== false;
+
     const settingsErr = document.querySelector("#settings-error");
     if (settingsErr) settingsErr.textContent = "";
 
@@ -153,7 +153,6 @@ export function initSettingsDialog({
         return;
       }
 
-      // 🌟 防呆防覆蓋邏輯：如果本機持股筆數為 0，詢問是否要從試算表 Pull，防止清空雲端！
       const localHoldingsCount = (state.holdings || []).filter((h) => Number(h.shares) > 0).length;
       if (localHoldingsCount === 0) {
         const shouldPull = window.confirm("偵測到此裝置目前無持倉紀錄。是否立即從 Google 試算表載入 (Pull) 既有資料？\n\n【確定】：從雲端試算表載入\n【取消】：直接切換（請手動操作）");
@@ -213,7 +212,6 @@ export function initSettingsDialog({
     }
   }
 
-  // 表單驗證與提交
   document.querySelector("#settings-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -249,6 +247,7 @@ export function initSettingsDialog({
 
     const finnhubToken = form.elements.finnhubToken?.value.trim() || "";
     const googleSheetWebhook = form.elements.googleSheetWebhook?.value.trim() || "";
+    const autoSyncOnTrade = form.elements.autoSyncOnTrade ? form.elements.autoSyncOnTrade.checked : true;
 
     state.settings = {
       ...state.settings,
@@ -257,6 +256,7 @@ export function initSettingsDialog({
       quoteApiUrl,
       finnhubToken,
       googleSheetWebhook,
+      autoSyncOnTrade, // 🌟 儲存開關設定
       ...Object.fromEntries(numericSettingKeys.map((key) => [key, Number(form.elements[key]?.value) || 0])),
     };
 
@@ -270,7 +270,6 @@ export function initSettingsDialog({
     toast("設定已儲存，行情與同步連線已更新。");
   });
 
-  // 儲存模式切換監聽
   document.querySelector("#storage-mode")?.addEventListener("change", (event) => {
     const requestedMode = event.currentTarget.value;
     cloudSync.runAction(async () => {
@@ -283,7 +282,6 @@ export function initSettingsDialog({
     }, getStorageMode());
   });
 
-  // 複製優化後的 GAS 腳本
   document.querySelector("#copy-gas-script-btn")?.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_TEMPLATE);
@@ -299,7 +297,6 @@ export function initSettingsDialog({
     }
   });
 
-  // 測試 Google 試算表連線
   document.querySelector("#google-sheet-test")?.addEventListener("click", async () => {
     const webhookInput = document.querySelector("#google-sheet-webhook");
     const url = webhookInput?.value.trim();
@@ -322,7 +319,6 @@ export function initSettingsDialog({
     }
   });
 
-  // Google 試算表手動 Push / Pull
   document.querySelector("#google-sheet-push")?.addEventListener("click", () => {
     googleSheetSync.pushToGoogleSheet({ silent: false });
   });

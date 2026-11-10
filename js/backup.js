@@ -1,4 +1,4 @@
-// js/backup.js - 備份導出、還原解析、CSV 與 Excel (XLS/XLSX) 多格式序列化模組
+// js/backup.js - 備份導出、還原解析、CSV 與 Excel (XLS/XLSX) 多格式序列化模組（優化重構版）
 import { normalizeImportedState, DEFAULT_ACCOUNT_ID } from "./storage.js";
 import { resolveStockIdentity, getStockName } from "./quotes.js";
 
@@ -9,10 +9,9 @@ export function safeId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
   });
 }
 
@@ -28,7 +27,7 @@ export function cleanNumber(val) {
     .replace(/[NT$¥,\s%]/gi, "");
 
   if (/^\((.+)\)$/.test(s)) {
-    s = "-" + s.replace(/^\((.+)\)$/, "$1");
+    s = `-${s.replace(/^\((.+)\)$/, "$1")}`;
   }
 
   const num = Number(s);
@@ -42,10 +41,12 @@ export function normalizeDate(rawDate, fallbackDate = new Date().toISOString().s
 
   str = str.split(/[ T]/)[0].trim();
 
+  // 民國年判斷 (例如 1130520)
   if (/^\d{7}$/.test(str)) {
     const rocYear = parseInt(str.slice(0, 3), 10);
     return `${rocYear + 1911}-${str.slice(3, 5)}-${str.slice(5, 7)}`;
   }
+  // 純西元 8 碼 (例如 20240520)
   if (/^\d{8}$/.test(str)) {
     return `${str.slice(0, 4)}-${str.slice(4, 6)}-${str.slice(6, 8)}`;
   }
@@ -251,9 +252,17 @@ function applyTransactionSafely(holding, tx) {
   }
 }
 
+function isGarbageRow(sText, nText) {
+  const combined = `${sText} ${nText}`.toLowerCase();
+  return (
+    (!sText && !nText) ||
+    /合計|小計|總計|總額|總預估|總現值|總融資|總利息|總損益|總成本|總報酬率|注意事項|備註|說明|製表|列印|客戶|帳號|免責/i.test(combined)
+  );
+}
+
 /**
- * 通用券商二維表格解析引擎
- * 🌟 嚴格區分：成交均價 (pIdx)、市價 (curPriceIdx)、現值 (mValIdx)、付出成本 (cIdx)
+ * 通用券商二維表格解析引擎（優化重構）
+ * 嚴格區分：成交均價 (pIdx)、市價 (curIdx)、現值 (mvIdx)、付出成本 (cIdx)
  */
 export function parseBrokerTableRows(rows) {
   if (!rows || rows.length === 0) return null;
@@ -281,37 +290,29 @@ export function parseBrokerTableRows(rows) {
   for (let r = 0; r < Math.min(35, rows.length); r++) {
     const row = rows[r].map((c) => String(c || "").trim().toLowerCase());
     
-    // 代號欄位
     const sIdx = row.findIndex((h) =>
       h.includes("symbol") || h.includes("ticker") || h.includes("代號") || h.includes("代碼") || (h.includes("code") && !h.includes("postal"))
     );
-    // 股名欄位
     const nIdx = row.findIndex((h, idx) =>
       idx !== sIdx && (h.includes("name") || h.includes("名稱") || h.includes("股名") || h.includes("標的") || h.includes("股票"))
     );
-    // 股數欄位
     const qIdx = row.findIndex((h) =>
       h.includes("quantity") || h.includes("shares") || h.includes("股數") || h.includes("數量") || h.includes("庫存") || h.includes("持股") || h.includes("張數")
     );
-    // 1. 成交均價 / 買入單價欄位
     const pIdx = row.findIndex((h) =>
       h === "成交均價" || h === "買進均價" || h === "成本價" || h.includes("均價") || h.includes("買進價") || (h.includes("單價") && !h.includes("市")) || (h.includes("價格") && !h.includes("總") && !h.includes("市")) || h === "price"
     );
-    // 2. 付出成本 / 總投資本金欄位（🌟 嚴格排除現值）
     const cIdx = row.findIndex((h) =>
       h === "付出成本" || h === "總成本" || h === "買進成本" || h === "成本金額" || h === "投資金額" || h === "成交價金" || h === "成交金額" ||
       (h.includes("成本") && !h.includes("均") && !h.includes("市")) || h.includes("價金") || h.includes("淨收付")
     );
-    // 3. 市價 / 目前現價欄位
     const curIdx = row.findIndex((h) =>
       h === "市價" || h === "現價" || h === "目前現價" || h === "收盤價" || h.includes("市價") || (h.includes("現價") && !h.includes("均"))
     );
-    // 4. 現值 / 評估市值欄位
     const mvIdx = row.findIndex((h) =>
       h === "現值" || h === "市值" || h === "預估現值" || h === "總現值" || (h.includes("現值") && !h.includes("價")) || h.includes("市值")
     );
 
-    // 當一行同時包含「代號/名稱」、「股數」以及「價格/成本」時，判定為真正表頭
     if ((sIdx >= 0 || nIdx >= 0) && qIdx >= 0 && (pIdx >= 0 || cIdx >= 0)) {
       headerRowIdx = r;
       symIdx = sIdx;
@@ -330,9 +331,7 @@ export function parseBrokerTableRows(rows) {
     }
   }
 
-  if (headerRowIdx === -1) {
-    return null;
-  }
+  if (headerRowIdx === -1) return null;
 
   const state = {
     accounts: [],
@@ -344,25 +343,12 @@ export function parseBrokerTableRows(rows) {
   };
 
   const headerRow = rows[headerRowIdx].map((c) => String(c || "").trim().toLowerCase());
-  
   const hasHoldingsKeyword = headerRow.some((h) => h.includes("庫存") || h.includes("持股") || h.includes("現有") || h.includes("未實現") || h.includes("損益") || h.includes("現值"));
   const isHoldingsSnapshot = hasHoldingsKeyword || (typeIdx === -1 && headerRow.some((h) => h.includes("成本") || h.includes("均價")));
   let lastValidDate = new Date().toISOString().slice(0, 10);
-
-  // 乾淨過濾表尾統計列
-  function isGarbageRow(sText, nText) {
-    const combined = `${sText} ${nText}`.toLowerCase();
-    return (
-      (!sText && !nText) ||
-      /合計|小計|總計|總額|總預估|總現值|總融資|總利息|總損益|總成本|總報酬率|注意事項|備註|說明|製表|列印|客戶|帳號|免責/i.test(combined)
-    );
-  }
-
   const dataRows = rows.slice(headerRowIdx + 1);
 
-  // -------------------------------------------------------------
-  // A. 處理「庫存總表快照（純股名自動反查代號）」
-  // -------------------------------------------------------------
+  // A. 庫存總表快照模式
   if (isHoldingsSnapshot) {
     for (const row of dataRows) {
       const rawSym = symIdx >= 0 ? String(row[symIdx] || "").trim() : "";
@@ -379,12 +365,9 @@ export function parseBrokerTableRows(rows) {
       let unitPrice = unitPriceIdx >= 0 ? cleanNumber(row[unitPriceIdx]) : 0;
       let totalCost = totalCostIdx >= 0 ? cleanNumber(row[totalCostIdx]) : 0;
 
-      // 付出成本優先；若無付出成本，由 均價 * 股數 計算
       if (totalCost === 0 && unitPrice > 0) totalCost = unitPrice * shares;
-      // 若有付出成本但無均價，由 付出成本 / 股數 計算
       if (unitPrice === 0 && totalCost > 0 && shares > 0) unitPrice = totalCost / shares;
 
-      // 市價優先；若無市價，由 現值 / 股數 計算；若仍無則以均價兜底
       let currentPrice = curPriceIdx >= 0 ? cleanNumber(row[curPriceIdx]) : 0;
       if (currentPrice === 0 && mValIdx >= 0 && shares > 0) {
         currentPrice = cleanNumber(row[mValIdx]) / shares;
@@ -434,9 +417,7 @@ export function parseBrokerTableRows(rows) {
     return imported;
   }
 
-  // -------------------------------------------------------------
-  // B. 處理「歷史交易明細紀錄」
-  // -------------------------------------------------------------
+  // B. 歷史交易紀錄模式
   for (const row of dataRows) {
     const rawSym = symIdx >= 0 ? String(row[symIdx] || "").trim() : "";
     const rawName = nameIdx >= 0 ? String(row[nameIdx] || "").trim() : "";
@@ -552,7 +533,7 @@ function parseOfficialCsv(rows, startIdx) {
       } else if (recType === "opening_balance" && dataCol) {
         state.openingBalances[row[2]] = JSON.parse(dataCol);
       }
-    } catch (e) {
+    } catch {
       console.warn("略過格式損壞之 CSV 行:", row);
     }
   }

@@ -1,4 +1,4 @@
-// cloud-sync.js - 雲端共用檔案同步器（完整封裝 File System Access API 與狀態佇列）
+// js/cloud-sync.js - 雲端共用檔案同步器（完整封裝 File System Access API 與狀態佇列）
 import { serializeBackup, parseBackup } from "./backup.js";
 import {
   getSharedFilePath,
@@ -149,6 +149,41 @@ export class CloudSyncManager {
         this.updateControls("雲端自動同步失敗；請重新授權或切回本機模式。", storageMode);
         this.toast(translateText(error.message || "共用檔案操作失敗。", this.getState().settings.language), true);
       });
+  }
+
+  // 🌟 交易前無感快速載入最新檔案
+  async silentLoad(storageMode) {
+    if (!this.sharedFileRecord?.handle || !this.cloudFileReady || storageMode !== "cloud") return;
+    try {
+      const file = await readSharedFile(this.sharedFileRecord.handle);
+      if (file.fingerprint === this.sharedFileRecord.fingerprint) return;
+      const imported = parseBackup(file.text);
+      this.onStateReplace(imported, { syncCloud: false });
+      this.sharedFileRecord.fingerprint = file.fingerprint;
+      await saveSharedFileRecord(this.sharedFileRecord.handle, file.fingerprint, this.sharedFileRecord.displayPath);
+    } catch (err) {
+      console.warn("[CloudSync] silentLoad 失敗:", err);
+    }
+  }
+
+  // 🌟 交易後立即無感推送存檔
+  async silentSave(storageMode) {
+    if (!this.sharedFileRecord?.handle || !this.cloudFileReady || storageMode !== "cloud") return;
+    try {
+      const state = this.getState();
+      const latestContent = serializeBackup(state);
+      const result = await writeSharedFile(
+        this.sharedFileRecord.handle,
+        latestContent,
+        this.sharedFileRecord.fingerprint
+      );
+      if (!result.conflict) {
+        this.sharedFileRecord.fingerprint = result.fingerprint;
+        await saveSharedFileRecord(this.sharedFileRecord.handle, result.fingerprint, this.sharedFileRecord.displayPath);
+      }
+    } catch (err) {
+      console.warn("[CloudSync] silentSave 失敗:", err);
+    }
   }
 
   async init(storageMode) {

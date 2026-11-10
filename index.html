@@ -455,6 +455,18 @@
                 <option value="cloud">雲端共用檔案（PC File System Access API）</option>
               </select>
             </div>
+
+            <!-- 🌟 交易時自動 PULL & PUSH 開關 -->
+            <div class="form-field" style="flex-direction: row; align-items: center; justify-content: space-between; margin-top: 12px; padding: 10px 12px; background: #f3f7f4; border-radius: 8px; border: 1px solid #dce8e0;">
+              <div>
+                <label for="auto-sync-on-trade" style="cursor: pointer; margin-bottom: 0; color: #2e4a3b; font-weight: 600; font-size: 12px;">
+                  🔄 交易時自動 PULL & PUSH（多裝置防衝突）
+                </label>
+                <small class="field-help" style="display: block; margin-top: 3px; font-size: 10px;">記帳或修改時先自動拉取雲端最新資料，確認後立即推送，防止多裝置互相覆蓋。</small>
+              </div>
+              <input type="checkbox" id="auto-sync-on-trade" name="autoSyncOnTrade" style="width: 19px; height: 19px; cursor: pointer; accent-color: #418874;" checked />
+            </div>
+
             <p class="field-help" id="storage-mode-status" role="status">目前使用本機儲存；資料僅保存在此瀏覽器。</p>
             <p class="field-help">本機、Google 試算表與共用檔案分開維護。切換模式前請先於下方完成連線設定。</p>
           </section>
